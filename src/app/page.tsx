@@ -86,7 +86,7 @@ export default function Page() {
       </div>
 
       {/* Input Area */}
-      <div className="fixed bottom-0 left-0 w-[calc(100%-10px)] pr-[10px] bg-[#1a1a18]/95 backdrop-blur-md z-50">
+      <div className="fixed bottom-0 left-0 w-[calc(100%-10px)]  bg-[#1a1a18]/95 backdrop-blur-md z-50">
         <div className="max-w-4xl mx-auto px-8 py-6">
           <form onSubmit={handleSubmit} className="relative">
             <input
