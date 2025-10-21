@@ -86,8 +86,8 @@ export default function Page() {
         <div className="max-w-4xl mx-auto px-8 py-12 space-y-6">
           {messages.map((m) => (
             <div key={m.id} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
-              <div className={`rounded-lg px-6 py-3 max-w-2xl ${m.role === "user" ? "bg-[#252724]" : ""}`}>
-                <p className="text-gray-300 whitespace-pre-wrap">{m.content}</p>
+              <div className={`rounded-lg px-6 py-3 max-w-4xl ${m.role === "user" ? "bg-[#252724]" : ""}`}>
+                <p className="text-white whitespace-pre-wrap">{m.content}</p>
               </div>
             </div>
           ))}
