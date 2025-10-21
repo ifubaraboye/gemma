@@ -14,9 +14,9 @@ export default function Page() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+  const [waiting, setWaiting] = useState(false); // for pulsing dot
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  // Auto scroll
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
@@ -29,6 +29,7 @@ export default function Page() {
     setMessages((prev) => [...prev, newMessage]);
     setInput("");
     setLoading(true);
+    setWaiting(true); // show pulsing dot while waiting for streaming
 
     const response = await fetch("/api/chat", {
       method: "POST",
@@ -41,6 +42,7 @@ export default function Page() {
     let assistantMessage = "";
 
     if (reader) {
+      setWaiting(false); // hide pulsing dot as soon as streaming starts
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
@@ -77,6 +79,7 @@ export default function Page() {
     }
 
     setLoading(false);
+    setWaiting(false);
   };
 
   return (
@@ -91,11 +94,24 @@ export default function Page() {
               </div>
             </div>
           ))}
+
+          {/* Pulsing dot for waiting */}
+          {waiting && (
+            <div className="flex justify-start">
+              <div className=" px-6 py-3 max-w-4xl">
+                <div className="flex space-x-1">
+                  <span className="w-4 h-4 bg-white rounded-full animate-pulse"></span>
+                  
+                </div>
+              </div>
+            </div>
+          )}
+
           <div ref={messagesEndRef} />
         </div>
       </div>
 
-      {/* Input */}
+      {/* Input (unchanged) */}
       <div className="fixed bottom-0 left-0 w-[calc(100%-10px)] bg-[#1a1a18]/95 backdrop-blur-md z-50">
         <div className="max-w-4xl mx-auto px-8 py-6">
           <form onSubmit={handleSubmit} className="relative">
@@ -110,7 +126,7 @@ export default function Page() {
               type="submit"
               size="icon"
               disabled={loading}
-              className="absolute right-2 top-1/2 -translate-y-1/2 h-8 w-8 rounded-md bg-[#1a1a18] hover:bg-[#1d1d1c] text-white"
+              className="absolute cursor-pointer right-2 top-1/2 -translate-y-1/2 h-8 w-8 rounded-md bg-[#1a1a18] hover:bg-[#1d1d1c] text-white"
             >
               <Send className="w-4 h-4" />
             </Button>
