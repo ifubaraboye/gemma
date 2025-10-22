@@ -1,2 +1,4 @@
 [] - Add database
-[] - Add text parsing
+[] - Save/add chats to sidebar
+[*] - Add model switching
+[*] - Add text parsing
