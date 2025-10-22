@@ -123,9 +123,9 @@
 
 /* Hardened: completely remove scrollbar buttons/arrows (Chromium / WebKit) */
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
-  background: transparent;
+  width: 0 !important;
+  height: 0 !important;
+  background: transparent !important;
 }
 
 /* Track & corner */
@@ -138,7 +138,7 @@
 
 /* Thumb */
 ::-webkit-scrollbar-thumb {
-  background-color: var(--muted-foreground) !important;
+  background-color: transparent !important;
   border-radius: 9999px;
   transition: background-color 0.2s ease, opacity 0.2s ease;
 }
@@ -171,11 +171,16 @@
 
 /* Hover style for thumb (optional) */
 ::-webkit-scrollbar-thumb:hover {
-  background-color: var(--foreground) !important;
+  background-color: transparent !important;
 }
 
 /* Firefox fallback (no arrows in Firefox) */
 * {
-  scrollbar-width: thin;
-  scrollbar-color: var(--muted-foreground) transparent;
+  scrollbar-width: none;
+  scrollbar-color: transparent transparent;
+}
+
+/* Hide scrollbars in IE/Edge legacy while keeping scroll functionality */
+html, body, * {
+  -ms-overflow-style: none;
 }
