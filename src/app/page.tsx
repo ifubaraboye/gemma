@@ -6,9 +6,9 @@ import { Button } from "@/components/ui/button";
 import ReactMarkdown from "react-markdown";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
+import { Copy } from "lucide-react";
 import remarkGfm from "remark-gfm";
 import type { Components } from "react-markdown";
-import { ChevronDown } from "lucide-react";
 import {
   Select,
   SelectContent,
@@ -25,9 +25,7 @@ interface Message {
 
 export default function Page() {
   const [messages, setMessages] = useState<Message[]>([]);
-  const [model, setModel] = useState(
-    "google/gemini-2.5-flash"
-  );
+  const [model, setModel] = useState("google/gemini-2.5-flash");
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
@@ -120,6 +118,10 @@ export default function Page() {
     setWaiting(false);
   };
 
+  async function copyToClipboard(text: string) {
+    await navigator.clipboard.writeText(text);
+  }
+
   const markdownComponents: Components = {
     code(props) {
       const { children, className } = props;
@@ -203,20 +205,21 @@ export default function Page() {
               }`}
             >
               <div
-                className={`rounded-lg px-6 py-3 max-w-4xl mb-8 ${
+                className={`rounded-lg px-6 py-3 max-w-4xl mb-4 ${
                   m.role === "user" ? "bg-[#252724]" : ""
                 }`}
               >
                 {m.role === "user" ? (
                   <p className="text-white whitespace-pre-wrap">{m.content}</p>
                 ) : (
-                  <div className="prose prose-invert max-w-none pb-28 [&>*:first-child]:mt-0 [&>*:last-child]:mb-0">
+                  <div className="prose prose-invert max-w-none pb-20 [&>*:first-child]:mt-0 [&>*:last-child]:mb-0">
                     <ReactMarkdown
                       remarkPlugins={[remarkGfm]}
                       components={markdownComponents}
                     >
                       {m.content}
                     </ReactMarkdown>
+                    <button onClick={() => copyToClipboard(m.content)}><Copy className="h-4 cursor-pointer hover:l" /></button>
                   </div>
                 )}
               </div>
@@ -238,7 +241,7 @@ export default function Page() {
       </div>
 
       <div className="fixed bottom-0 left-0 w-full ">
-        <div className="max-w-204 mx-auto p-3 bg-[#161616] rounded-t-3xl">
+        <div className="max-w-212 mx-auto p-3 bg-[#161616] rounded-t-3xl">
           <form onSubmit={handleSubmit} className="relative">
             <div className="flex items-end gap-3   px-4 py-3  transition-all">
               <textarea
@@ -255,8 +258,6 @@ export default function Page() {
                 className="flex-1 bg-transparent outline-none text-white placeholder-white text-sm resize-none max-h-48 min-h-12 font-sans"
                 rows={1}
               />
-
-              
             </div>
 
             <div className="flex justify-between items-center mt-3 px-2">
@@ -271,9 +272,7 @@ export default function Page() {
                       value={model.value}
                       className="text-gray-400 hover:text-white"
                     >
-                      <div className="text-white">
-                      {model.name}
-                      </div>
+                      <div className="text-white">{model.name}</div>
                     </SelectItem>
                   ))}
                 </SelectContent>
