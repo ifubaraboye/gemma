@@ -16,6 +16,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { supabase } from "@/utils/supabase/client";
+import { useParams } from "next/navigation";
 
 interface Message {
   id: string;
@@ -23,14 +25,17 @@ interface Message {
   content: string;
 }
 
-export default function Page() {
+export default function ChatPage() {
+  const params = useParams();
+  const chatId = params.id as string;
   const [messages, setMessages] = useState<Message[]>([]);
   const [model, setModel] = useState("google/gemini-2.5-flash");
-  const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [waiting, setWaiting] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
   const models = [
     { name: "Gemini 2.5 Flash", value: "google/gemini-2.5-flash" },
     {
@@ -43,11 +48,33 @@ export default function Page() {
     },
   ];
 
+  // Load chat messages on mount
+  useEffect(() => {
+    async function loadChat() {
+      const { data, error } = await supabase
+        .from("chats")
+        .select("*")
+        .eq("id", chatId)
+        .single();
+
+      if (error) {
+        console.error("Error loading chat:", error);
+        return;
+      }
+
+      if (data?.messages) {
+        setMessages(data.messages);
+      }
+    }
+
+    if (chatId) {
+      loadChat();
+    }
+  }, [chatId]);
+
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
-
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -64,17 +91,15 @@ export default function Page() {
     setLoading(true);
     setWaiting(true);
 
-    // Create chat immediately with the first user message
-    const createRes = await fetch("/api/chats", {
-      method: "POST",
+    // Update chat in database (also set title immediately)
+    await fetch(`/api/chats/${chatId}`, {
+      method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        title: updatedMessages[0]?.content || "New Chat",
         messages: updatedMessages,
+        title: (updatedMessages?.[0]?.content || "New Chat").slice(0, 80),
       }),
     });
-    const created = createRes.ok ? await createRes.json() : null;
-    const createdChatId = created?.id ?? created?.[0]?.id;
 
     const response = await fetch("/api/chat", {
       method: "POST",
@@ -129,13 +154,8 @@ export default function Page() {
           }
         });
       }
-    }
 
-    setLoading(false);
-    setWaiting(false);
-
-    // After streaming completes, persist the assistant reply
-    if (createdChatId) {
+      // Save final messages to database
       const finalMessages = [
         ...updatedMessages,
         {
@@ -144,7 +164,8 @@ export default function Page() {
           content: assistantMessage,
         },
       ];
-      await fetch(`/api/chats/${createdChatId}`, {
+
+      await fetch(`/api/chats/${chatId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -153,6 +174,9 @@ export default function Page() {
         }),
       });
     }
+
+    setLoading(false);
+    setWaiting(false);
   };
 
   async function copyToClipboard(text: string) {
@@ -201,9 +225,9 @@ export default function Page() {
         {children}
       </blockquote>
     ),
-    a: ({ children, href }) => (
+    a: ({ children, ...props }: React.AnchorHTMLAttributes<HTMLAnchorElement>) => (
       <a
-        href={href}
+        {...props} // spreads href, target, rel, className, etc.
         className="text-blue-400 hover:text-blue-300 underline"
         target="_blank"
         rel="noopener noreferrer"
@@ -256,7 +280,9 @@ export default function Page() {
                     >
                       {m.content}
                     </ReactMarkdown>
-                    <button onClick={() => copyToClipboard(m.content)}><Copy className="h-4 cursor-pointer hover:l" /></button>
+                    <button onClick={() => copyToClipboard(m.content)}>
+                      <Copy className="h-4 cursor-pointer hover:l" />
+                    </button>
                   </div>
                 )}
               </div>
@@ -277,10 +303,10 @@ export default function Page() {
         </div>
       </div>
 
-      <div className="sticky bottom-0 w-full ">
+      <div className="sticky bottom-0 w-full">
         <div className="max-w-212 mx-auto p-3 bg-[#161616] rounded-t-3xl">
           <form onSubmit={handleSubmit} className="relative">
-            <div className="flex items-end gap-3   px-4 py-3  transition-all">
+            <div className="flex items-end gap-3 px-4 py-3 transition-all">
               <textarea
                 ref={textareaRef}
                 value={input}
@@ -314,7 +340,6 @@ export default function Page() {
                   ))}
                 </SelectContent>
               </Select>
-              {/* Send button */}
               <Button
                 type="submit"
                 size="icon"

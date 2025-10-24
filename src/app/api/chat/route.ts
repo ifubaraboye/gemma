@@ -1,39 +1,51 @@
 import { NextResponse } from "next/server";
 
 export async function POST(req: Request) {
-  const { messages, model } = await req.json();
+  try {
+    const { messages, model } = await req.json();
 
-  const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      "Authorization": `Bearer ${process.env.OPENROUTER_API_KEY}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model: `${model}`,
-      messages,
-      stream: true, // important! enables streaming
-    }),
-  });
+    if (!process.env.OPENROUTER_API_KEY) {
+      return NextResponse.json(
+        { error: "Missing OPENROUTER_API_KEY" },
+        { status: 500 }
+      );
+    }
 
-  // Return a ReadableStream directly to the frontend
-  const stream = new ReadableStream({
-    async start(controller) {
-      const reader = response.body?.getReader();
-      const decoder = new TextDecoder();
+    const payload = {
+      model: model || "openai/gpt-4o-mini",
+      stream: true,
+      messages: (messages || []).map((m: any) => ({
+        role: m.role,
+        content: m.content,
+      })),
+    };
 
-      if (!reader) return;
+    const upstream = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
+        "Content-Type": "application/json",
+        "HTTP-Referer": process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000",
+        "X-Title": "Gemma",
+      },
+      body: JSON.stringify(payload),
+    });
 
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
+    if (!upstream.ok) {
+      const text = await upstream.text();
+      return new NextResponse(text, { status: upstream.status });
+    }
 
-        const chunk = decoder.decode(value);
-        controller.enqueue(chunk);
-      }
-      controller.close();
-    },
-  });
+    const headers = new Headers(upstream.headers);
+    headers.set("Content-Type", "text/event-stream");
+    headers.set("Cache-Control", "no-cache");
+    headers.set("Connection", "keep-alive");
 
-  return new NextResponse(stream);
+    return new Response(upstream.body, { headers });
+  } catch (e: any) {
+    return NextResponse.json(
+      { error: e?.message || "Internal Server Error" },
+      { status: 500 }
+    );
+  }
 }
