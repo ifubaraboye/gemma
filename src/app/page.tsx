@@ -9,6 +9,7 @@ import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 import { Copy } from "lucide-react";
 import remarkGfm from "remark-gfm";
 import type { Components } from "react-markdown";
+import { useRouter } from "next/navigation";
 import {
   Select,
   SelectContent,
@@ -26,11 +27,12 @@ interface Message {
 export default function Page() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [model, setModel] = useState("google/gemini-2.5-flash");
-  const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [waiting, setWaiting] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const router = useRouter();
+  
   const models = [
     { name: "Gemini 2.5 Flash", value: "google/gemini-2.5-flash" },
     {
@@ -51,7 +53,7 @@ export default function Page() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!input.trim()) return;
+    if (!input.trim() || loading) return;
 
     const newMessage: Message = {
       id: Date.now().toString(),
@@ -60,98 +62,156 @@ export default function Page() {
     };
     const updatedMessages = [...messages, newMessage];
     setMessages(updatedMessages);
-    setInput("");
+    const userInput = input;
+    setInput("");  
     setLoading(true);
     setWaiting(true);
 
-    // Create chat immediately with the first user message
-    const createRes = await fetch("/api/chats", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        title: updatedMessages[0]?.content || "New Chat",
-        messages: updatedMessages,
-      }),
-    });
-    const created = createRes.ok ? await createRes.json() : null;
-    const createdChatId = created?.id ?? created?.[0]?.id;
-
-    const response = await fetch("/api/chat", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ messages: updatedMessages, model }),
-    });
-
-    const reader = response.body?.getReader();
-    const decoder = new TextDecoder();
-    let assistantMessage = "";
-
-    if (reader) {
-      setWaiting(false);
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        const chunk = decoder.decode(value, { stream: true });
-
-        chunk.split("\n").forEach((line) => {
-          if (!line.startsWith("data:")) return;
-          const data = line.replace("data: ", "").trim();
-          if (data === "[DONE]") return;
-
-          try {
-            const parsed = JSON.parse(data);
-            const delta = parsed.choices?.[0]?.delta?.content;
-            if (delta) {
-              assistantMessage += delta;
-            }
-          } catch (err) {
-            console.error("Failed to parse chunk:", err);
-          }
-        });
-
-        setMessages((prev) => {
-          const last = prev[prev.length - 1];
-          if (last?.role === "assistant") {
-            return [
-              ...prev.slice(0, -1),
-              { ...last, content: assistantMessage },
-            ];
-          } else {
-            return [
-              ...prev,
-              {
-                id: Date.now().toString(),
-                role: "assistant",
-                content: assistantMessage,
-              },
-            ];
-          }
-        });
-      }
-    }
-
-    setLoading(false);
-    setWaiting(false);
-
-    // After streaming completes, persist the assistant reply
-    if (createdChatId) {
-      const finalMessages = [
-        ...updatedMessages,
-        {
-          id: Date.now().toString(),
-          role: "assistant" as const,
-          content: assistantMessage,
+    try {
+      // Create a temporary chat ID for optimistic UI
+      const tempChatId = `temp-${Date.now()}`;
+      const chatTitle = userInput.slice(0, 80) || "New Chat";
+      
+      console.log("Dispatching chat-creating event", { tempChatId, chatTitle });
+      
+      // Dispatch custom event to show loading chat in sidebar immediately
+      const creatingEvent = new CustomEvent('chat-creating', { 
+        detail: { 
+          id: tempChatId, 
+          title: chatTitle,
+          isLoading: true 
         },
-      ];
-      await fetch(`/api/chats/${createdChatId}`, {
-        method: "PATCH",
+        bubbles: true,
+        composed: true
+      });
+      window.dispatchEvent(creatingEvent);
+      
+      // Small delay to ensure event is processed
+      await new Promise(resolve => setTimeout(resolve, 50));
+
+      // Create chat with the first user message
+      const createRes = await fetch("/api/chats", {
+        method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          messages: finalMessages,
-          title: (updatedMessages?.[0]?.content || "New Chat").slice(0, 80),
+          title: chatTitle,
+          messages: updatedMessages,
         }),
       });
+
+      if (!createRes.ok) {
+        console.log("Chat creation failed, dispatching failure event");
+        // Remove temp chat from sidebar on error
+        window.dispatchEvent(new CustomEvent('chat-creation-failed', { 
+          detail: { id: tempChatId },
+          bubbles: true,
+          composed: true
+        }));
+        throw new Error("Failed to create chat");
+      }
+
+      const created = await createRes.json();
+      const createdChatId = created?.id;
+
+      console.log("Chat created successfully", { tempChatId, createdChatId });
+
+      // Update sidebar with real chat ID
+      window.dispatchEvent(new CustomEvent('chat-created', { 
+        detail: { 
+          tempId: tempChatId, 
+          realId: createdChatId,
+          chat: created
+        },
+        bubbles: true,
+        composed: true
+      }));
+
+      // Stream the AI response
+      const response = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ messages: updatedMessages, model }),
+      });
+
+      const reader = response.body?.getReader();
+      const decoder = new TextDecoder();
+      let assistantMessage = "";
+
+      if (reader) {
+        setWaiting(false);
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          const chunk = decoder.decode(value, { stream: true });
+
+          chunk.split("\n").forEach((line) => {
+            if (!line.startsWith("data:")) return;
+            const data = line.replace("data: ", "").trim();
+            if (data === "[DONE]") return;
+
+            try {
+              const parsed = JSON.parse(data);
+              const delta = parsed.choices?.[0]?.delta?.content;
+              if (delta) {
+                assistantMessage += delta;
+              }
+            } catch (err) {
+              console.error("Failed to parse chunk:", err);
+            }
+          });
+
+          setMessages((prev) => {
+            const last = prev[prev.length - 1];
+            if (last?.role === "assistant") {
+              return [
+                ...prev.slice(0, -1),
+                { ...last, content: assistantMessage },
+              ];
+            } else {
+              return [
+                ...prev,
+                {
+                  id: Date.now().toString(),
+                  role: "assistant",
+                  content: assistantMessage,
+                },
+              ];
+            }
+          });
+        }
+      }
+
+      setLoading(false);
+      setWaiting(false);
+
+      // After streaming completes, persist the assistant reply and navigate
+      if (createdChatId) {
+        const finalMessages = [
+          ...updatedMessages,
+          {
+            id: Date.now().toString(),
+            role: "assistant" as const,
+            content: assistantMessage,
+          },
+        ];
+        
+        await fetch(`/api/chats/${createdChatId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            messages: finalMessages,
+            title: chatTitle,
+          }),
+        });
+
+        // Navigate to the new chat page
+        router.push(`/chat/${createdChatId}`);
+      }
+    } catch (error) {
+      console.error("Error during chat creation:", error);
+      setLoading(false);
+      setWaiting(false);
     }
   };
 
@@ -234,6 +294,15 @@ export default function Page() {
     <div className="flex flex-col h-screen bg-[#1a1a18] text-white">
       <div className="flex-1 overflow-y-auto pb-6">
         <div className="max-w-4xl mx-auto px-8 py-12 space-y-6">
+          {messages.length === 0 && (
+            <div className="flex items-center justify-center h-full">
+              <div className="text-center">
+                <h1 className="text-4xl font-bold mb-4">Welcome to Gemma</h1>
+                <p className="text-gray-400">Start a new conversation below</p>
+              </div>
+            </div>
+          )}
+
           {messages.map((m) => (
             <div
               key={m.id}
@@ -256,7 +325,9 @@ export default function Page() {
                     >
                       {m.content}
                     </ReactMarkdown>
-                    <button onClick={() => copyToClipboard(m.content)}><Copy className="h-4 cursor-pointer hover:l" /></button>
+                    <button onClick={() => copyToClipboard(m.content)}>
+                      <Copy className="h-4 cursor-pointer hover:opacity-70" />
+                    </button>
                   </div>
                 )}
               </div>
@@ -277,10 +348,10 @@ export default function Page() {
         </div>
       </div>
 
-      <div className="sticky bottom-0 w-full ">
+      <div className="sticky bottom-0 w-full">
         <div className="max-w-212 mx-auto p-3 bg-[#161616] rounded-t-3xl">
           <form onSubmit={handleSubmit} className="relative">
-            <div className="flex items-end gap-3   px-4 py-3  transition-all">
+            <div className="flex items-end gap-3 px-4 py-3 transition-all">
               <textarea
                 ref={textareaRef}
                 value={input}
@@ -314,11 +385,10 @@ export default function Page() {
                   ))}
                 </SelectContent>
               </Select>
-              {/* Send button */}
               <Button
                 type="submit"
                 size="icon"
-                disabled={!input.trim()}
+                disabled={!input.trim() || loading}
                 className="h-10 w-10 rounded-full cursor-pointer bg-[#3a3a3a] hover:bg-[#4a4a4a] disabled:opacity-50 disabled:cursor-not-allowed text-white transition shrink-0"
               >
                 <Send className="w-5 h-5" />

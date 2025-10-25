@@ -68,12 +68,14 @@
   --chart-3: oklch(0.398 0.07 227.392);
   --chart-4: oklch(0.828 0.189 84.429);
   --chart-5: oklch(0.769 0.188 70.08);
-  --sidebar: oklch(0.985 0 0);
-  --sidebar-foreground: oklch(0.145 0 0);
+  /* change sidebar color */
+  --sidebar: oklch(0.18 0 0); 
+  --sidebar-foreground: oklch(21.017% 0.00157 16.444);
   --sidebar-primary: oklch(0.205 0 0);
   --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.97 0 0);
-  --sidebar-accent-foreground: oklch(0.205 0 0);
+  /* change side bar item color */
+  --sidebar-accent: oklch(11.7% 0.004 112);
+  --sidebar-accent-foreground: oklch(100% 0.00011 271.152);
   --sidebar-border: oklch(0.922 0 0);
   --sidebar-ring: oklch(0.708 0 0);
 }
@@ -113,12 +115,12 @@
 }
 
 @layer base {
-  * {
+  /* * {
     @apply border-border outline-ring/50;
-  }
-  body {
+  } */
+  /* body {
     @apply bg-background text-foreground;
-  }
+  } */
 }
 
 /* Hardened: completely remove scrollbar buttons/arrows (Chromium / WebKit) */
