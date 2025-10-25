@@ -9,14 +9,7 @@ import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 import { Copy } from "lucide-react";
 import remarkGfm from "remark-gfm";
 import type { Components } from "react-markdown";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { supabase } from "@/utils/supabase/client";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useParams } from "next/navigation";
 
 interface Message {
@@ -35,6 +28,7 @@ export default function ChatPage() {
   const [waiting, setWaiting] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const streamStartedRef = useRef(false);
 
   const models = [
     { name: "Gemini 2.5 Flash", value: "google/gemini-2.5-flash" },
@@ -48,28 +42,134 @@ export default function ChatPage() {
     },
   ];
 
-  // Load chat messages on mount
   useEffect(() => {
-    async function loadChat() {
-      const { data, error } = await supabase
-        .from("chats")
-        .select("*")
-        .eq("id", chatId)
-        .single();
+    if (!chatId) return;
+    streamStartedRef.current = false;
 
-      if (error) {
-        console.error("Error loading chat:", error);
-        return;
+    let pendingFromCache = false;
+    let cachedMessages: Message[] = [];
+
+    try {
+      const raw = typeof window !== 'undefined' ? localStorage.getItem(`chat:${chatId}`) : null;
+      if (raw) {
+        const cached = JSON.parse(raw);
+        if (Array.isArray(cached?.messages)) {
+          cachedMessages = cached.messages;
+          setMessages(cached.messages);
+        }
+        if (cached?.model && typeof cached.model === 'string') {
+          setModel(cached.model);
+        }
+        pendingFromCache = !!cached?.pending;
       }
+    } catch {}
 
-      if (data?.messages) {
-        setMessages(data.messages);
+    (async () => {
+      if (pendingFromCache) return;
+      try {
+        const res = await fetch(`/api/chats/${chatId}`);
+        if (res.ok) {
+          const data = await res.json();
+          if (Array.isArray(data?.messages)) {
+            setMessages(data.messages);
+            try {
+              const raw = typeof window !== 'undefined' ? localStorage.getItem(`chat:${chatId}`) : null;
+              const cached = raw ? JSON.parse(raw) : {};
+              localStorage.setItem(`chat:${chatId}`, JSON.stringify({
+                ...cached,
+                id: chatId,
+                title: data?.title || cached?.title,
+                messages: data.messages,
+                model: cached?.model || model,
+                pending: false,
+                updatedAt: Date.now(),
+              }));
+            } catch {}
+          }
+        } else if (res.status === 404 || res.status === 401) {
+        }
+      } catch (e) {
       }
-    }
+    })();
 
-    if (chatId) {
-      loadChat();
-    }
+    (async () => {
+      if (!pendingFromCache) return;
+      await new Promise(resolve => setTimeout(resolve, 150));
+      if (streamStartedRef.current) return;
+      streamStartedRef.current = true;
+
+      const messagesToSend = cachedMessages.length > 0 ? cachedMessages : [];
+      if (messagesToSend.length === 0) return;
+
+      setWaiting(true);
+      try {
+        const response = await fetch("/api/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ messages: messagesToSend, model }),
+        });
+        const reader = response.body?.getReader();
+        const decoder = new TextDecoder();
+        let assistantMessage = "";
+        if (reader) {
+          setWaiting(false);
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            const chunk = decoder.decode(value, { stream: true });
+            chunk.split("\n").forEach((line) => {
+              if (!line.startsWith("data:")) return;
+              const data = line.replace("data: ", "").trim();
+              if (data === "[DONE]") return;
+              try {
+                const parsed = JSON.parse(data);
+                const delta = parsed.choices?.[0]?.delta?.content;
+                if (delta) assistantMessage += delta;
+              } catch {}
+            });
+            setMessages((prev) => {
+              const last = prev[prev.length - 1];
+              const next = last?.role === "assistant"
+                ? [...prev.slice(0, -1), { ...last, content: assistantMessage }]
+                : [...prev, { id: Date.now().toString(), role: "assistant" as const, content: assistantMessage }];
+              try {
+                const raw = typeof window !== 'undefined' ? localStorage.getItem(`chat:${chatId}`) : null;
+                const cached = raw ? JSON.parse(raw) : {};
+                localStorage.setItem(`chat:${chatId}`, JSON.stringify({ ...cached, messages: next, updatedAt: Date.now() }));
+              } catch {}
+              return next;
+            });
+          }
+
+          setMessages((prev) => {
+            const last = prev[prev.length - 1];
+            const finalMessages = last?.role === "assistant" && last.content === assistantMessage
+              ? prev
+              : [...prev, { id: Date.now().toString(), role: "assistant" as const, content: assistantMessage }];
+            try {
+              const raw = typeof window !== 'undefined' ? localStorage.getItem(`chat:${chatId}`) : null;
+              const cached = raw ? JSON.parse(raw) : {};
+              localStorage.setItem(`chat:${chatId}`, JSON.stringify({ ...cached, messages: finalMessages, pending: false, updatedAt: Date.now() }));
+            } catch {}
+            (async () => {
+              try {
+                await fetch(`/api/chats/${chatId}`, {
+                  method: "PATCH",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    messages: finalMessages,
+                    title: (prev?.[0]?.content || "New Chat").slice(0, 80),
+                  }),
+                });
+              } catch {}
+            })();
+            return finalMessages;
+          });
+        }
+      } finally {
+        setWaiting(false);
+      }
+    })();
   }, [chatId]);
 
   useEffect(() => {
@@ -100,6 +200,11 @@ export default function ChatPage() {
         title: (updatedMessages?.[0]?.content || "New Chat").slice(0, 80),
       }),
     });
+    try {
+      const raw = typeof window !== 'undefined' ? localStorage.getItem(`chat:${chatId}`) : null;
+      const cached = raw ? JSON.parse(raw) : {};
+      localStorage.setItem(`chat:${chatId}`, JSON.stringify({ ...cached, messages: updatedMessages, updatedAt: Date.now() }));
+    } catch {}
 
     const response = await fetch("/api/chat", {
       method: "POST",
@@ -137,21 +242,15 @@ export default function ChatPage() {
 
         setMessages((prev) => {
           const last = prev[prev.length - 1];
-          if (last?.role === "assistant") {
-            return [
-              ...prev.slice(0, -1),
-              { ...last, content: assistantMessage },
-            ];
-          } else {
-            return [
-              ...prev,
-              {
-                id: Date.now().toString(),
-                role: "assistant",
-                content: assistantMessage,
-              },
-            ];
-          }
+          const next = last?.role === "assistant"
+            ? [...prev.slice(0, -1), { ...last, content: assistantMessage }]
+            : [...prev, { id: Date.now().toString(), role: "assistant" as const, content: assistantMessage }];
+          try {
+            const raw = typeof window !== 'undefined' ? localStorage.getItem(`chat:${chatId}`) : null;
+            const cached = raw ? JSON.parse(raw) : {};
+            localStorage.setItem(`chat:${chatId}`, JSON.stringify({ ...cached, messages: next, updatedAt: Date.now() }));
+          } catch {}
+          return next;
         });
       }
 
@@ -173,6 +272,11 @@ export default function ChatPage() {
           title: (updatedMessages?.[0]?.content || "New Chat").slice(0, 80),
         }),
       });
+      try {
+        const raw = typeof window !== 'undefined' ? localStorage.getItem(`chat:${chatId}`) : null;
+        const cached = raw ? JSON.parse(raw) : {};
+        localStorage.setItem(`chat:${chatId}`, JSON.stringify({ ...cached, messages: finalMessages, pending: false, updatedAt: Date.now() }));
+      } catch {}
     }
 
     setLoading(false);

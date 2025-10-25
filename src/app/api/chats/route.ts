@@ -26,12 +26,13 @@ export async function POST(req: Request) {
   const user = await currentUser();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const { title, messages } = await req.json();
+  const { id, title, messages } = await req.json();
 
   const { data, error } = await supabase.from("chats").insert([
     {
+      ...(id ? { id } : {}),
       user_id: user.id, // Clerk user ID as text
-      title: title || messages[0]?.content || "New Chat",
+      title: title || messages?.[0]?.content || "New Chat",
       messages: messages || [],
     },
   ]).select().single();

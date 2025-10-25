@@ -68,146 +68,69 @@ export default function Page() {
     setWaiting(true);
 
     try {
-      // Create a temporary chat ID for optimistic UI
-      const tempChatId = `temp-${Date.now()}`;
+      const newChatId = (typeof crypto !== 'undefined' && 'randomUUID' in crypto)
+        ? (crypto as any).randomUUID()
+        : `c_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
       const chatTitle = userInput.slice(0, 80) || "New Chat";
-      
-      console.log("Dispatching chat-creating event", { tempChatId, chatTitle });
-      
-      // Dispatch custom event to show loading chat in sidebar immediately
-      const creatingEvent = new CustomEvent('chat-creating', { 
-        detail: { 
-          id: tempChatId, 
-          title: chatTitle,
-          isLoading: true 
-        },
-        bubbles: true,
-        composed: true
-      });
-      window.dispatchEvent(creatingEvent);
-      
-      // Small delay to ensure event is processed
-      await new Promise(resolve => setTimeout(resolve, 50));
 
-      // Create chat with the first user message
-      const createRes = await fetch("/api/chats", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+      try {
+        const cache = {
+          id: newChatId,
           title: chatTitle,
           messages: updatedMessages,
-        }),
-      });
+          model,
+          pending: true,
+          updatedAt: Date.now(),
+        };
+        if (typeof window !== 'undefined') {
+          localStorage.setItem(`chat:${newChatId}`, JSON.stringify(cache));
+        }
+      } catch {}
 
-      if (!createRes.ok) {
-        console.log("Chat creation failed, dispatching failure event");
-        // Remove temp chat from sidebar on error
-        window.dispatchEvent(new CustomEvent('chat-creation-failed', { 
-          detail: { id: tempChatId },
-          bubbles: true,
-          composed: true
-        }));
-        throw new Error("Failed to create chat");
-      }
-
-      const created = await createRes.json();
-      const createdChatId = created?.id;
-
-      console.log("Chat created successfully", { tempChatId, createdChatId });
-
-      // Update sidebar with real chat ID
-      window.dispatchEvent(new CustomEvent('chat-created', { 
-        detail: { 
-          tempId: tempChatId, 
-          realId: createdChatId,
-          chat: created
-        },
+      window.dispatchEvent(new CustomEvent('chat-creating', { 
+        detail: { id: newChatId, title: chatTitle },
         bubbles: true,
         composed: true
       }));
 
-      // Stream the AI response
-      const response = await fetch("/api/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages: updatedMessages, model }),
-      });
+      router.push(`/chat/${newChatId}`);
 
-      const reader = response.body?.getReader();
-      const decoder = new TextDecoder();
-      let assistantMessage = "";
-
-      if (reader) {
-        setWaiting(false);
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-
-          const chunk = decoder.decode(value, { stream: true });
-
-          chunk.split("\n").forEach((line) => {
-            if (!line.startsWith("data:")) return;
-            const data = line.replace("data: ", "").trim();
-            if (data === "[DONE]") return;
-
-            try {
-              const parsed = JSON.parse(data);
-              const delta = parsed.choices?.[0]?.delta?.content;
-              if (delta) {
-                assistantMessage += delta;
-              }
-            } catch (err) {
-              console.error("Failed to parse chunk:", err);
-            }
+      (async () => {
+        try {
+          const createRes = await fetch("/api/chats", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              id: newChatId,
+              title: chatTitle,
+              messages: updatedMessages,
+            }),
           });
-
-          setMessages((prev) => {
-            const last = prev[prev.length - 1];
-            if (last?.role === "assistant") {
-              return [
-                ...prev.slice(0, -1),
-                { ...last, content: assistantMessage },
-              ];
-            } else {
-              return [
-                ...prev,
-                {
-                  id: Date.now().toString(),
-                  role: "assistant",
-                  content: assistantMessage,
-                },
-              ];
-            }
-          });
+          if (createRes.ok) {
+            const created = await createRes.json();
+            window.dispatchEvent(new CustomEvent('chat-created', { 
+              detail: { tempId: newChatId, realId: newChatId, chat: created },
+              bubbles: true,
+              composed: true
+            }));
+          } else {
+            window.dispatchEvent(new CustomEvent('chat-creation-failed', { 
+              detail: { id: newChatId },
+              bubbles: true,
+              composed: true
+            }));
+          }
+        } catch {
+          window.dispatchEvent(new CustomEvent('chat-creation-failed', { 
+            detail: { id: newChatId },
+            bubbles: true,
+            composed: true
+          }));
         }
-      }
-
+      })();
+      
       setLoading(false);
       setWaiting(false);
-
-      // After streaming completes, persist the assistant reply and navigate
-      if (createdChatId) {
-        const finalMessages = [
-          ...updatedMessages,
-          {
-            id: Date.now().toString(),
-            role: "assistant" as const,
-            content: assistantMessage,
-          },
-        ];
-        
-        await fetch(`/api/chats/${createdChatId}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            messages: finalMessages,
-            title: chatTitle,
-          }),
-        });
-
-        // Navigate to the new chat page
-        router.push(`/chat/${createdChatId}`);
-      }
     } catch (error) {
       console.error("Error during chat creation:", error);
       setLoading(false);
@@ -295,7 +218,7 @@ export default function Page() {
       <div className="flex-1 overflow-y-auto pb-6">
         <div className="max-w-4xl mx-auto px-8 py-12 space-y-6">
           {messages.length === 0 && (
-            <div className="flex items-center justify-center h-full">
+            <div className="flex items-center py-56 justify-center h-full">
               <div className="text-center">
                 <h1 className="text-4xl font-bold mb-4">Welcome to Gemma</h1>
                 <p className="text-gray-400">Start a new conversation below</p>
@@ -311,7 +234,7 @@ export default function Page() {
               }`}
             >
               <div
-                className={`rounded-lg px-6 py-3 max-w-4xl mb-4 ${
+                className={`rounded-lg px-6 py-3 max-w-2xl mb-4 ${
                   m.role === "user" ? "bg-[#252724]" : ""
                 }`}
               >

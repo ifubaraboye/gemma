@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { MessageSquare, Home, Search, Settings, LogIn } from "lucide-react";
+import { MessageSquare, LogIn } from "lucide-react";
 import {
   Sidebar,
   SidebarContent,
@@ -13,91 +13,110 @@ import {
   SidebarMenuItem,
 } from "@/components/ui/sidebar";
 import { SignedIn, SignedOut, UserButton, useUser, SignInButton } from "@clerk/nextjs";
-import { supabase } from "@/utils/supabase/client";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 
+interface Chat {
+  id: string;
+  title?: string;
+  isLoading?: boolean;
+  user_id: string;
+  created_at?: string;
+}
+
+interface ChatCreatingDetail {
+  id: string;
+  title?: string;
+}
+
+interface ChatCreatedDetail {
+  tempId: string;
+  realId: string;
+  chat?: Chat;
+}
+
+interface ChatFailedDetail {
+  id: string;
+}
+
 export function AppSidebar() {
   const { user } = useUser();
-  const [chats, setChats] = useState<any[]>([]);
+  const [chats, setChats] = useState<Chat[]>([]);
   const pathname = usePathname();
   const router = useRouter();
 
   useEffect(() => {
     if (!user?.id) return;
-
-    async function fetchChats() {
-      const { data, error } = await supabase
-        .from("chats")
-        .select("*")
-        .eq("user_id", user!.id)
-        .order("created_at", { ascending: false });
-
-      if (error) console.error("Error fetching chats:", error);
-      else setChats(data || []);
-    }
-
-    fetchChats();
+    (async () => {
+      try {
+        const res = await fetch("/api/chats");
+        if (res.ok) {
+          const data = await res.json();
+          setChats((data as Chat[]) || []);
+        }
+      } catch {}
+    })();
   }, [user]);
 
   useEffect(() => {
     if (!user?.id) return;
-    const channel = supabase
-      .channel("realtime-chats")
-      .on(
-        "postgres_changes",
-        { event: "INSERT", schema: "public", table: "chats", filter: `user_id=eq.${user.id}` },
-        (payload: any) => {
-          setChats((prev) => {
-            const exists = prev.some((c) => c.id === payload.new.id);
-            return exists ? prev : [payload.new, ...prev.filter((c) => c.id !== payload.new.id)];
-          });
-        }
-      )
-      .on(
-        "postgres_changes",
-        { event: "UPDATE", schema: "public", table: "chats", filter: `user_id=eq.${user.id}` },
-        (payload: any) => {
-          setChats((prev) => prev.map((c) => (c.id === payload.new.id ? payload.new : c)));
-        }
-      )
-      .subscribe();
-
+    let raf = 0;
+    function onCreatedOrUpdated() {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(async () => {
+        try {
+          const res = await fetch("/api/chats");
+          if (res.ok) {
+            const data = await res.json();
+            setChats((data as Chat[]) || []);
+          }
+        } catch {}
+      });
+    }
+    window.addEventListener("chat-created", onCreatedOrUpdated as EventListener);
+    window.addEventListener("chat-creation-failed", onCreatedOrUpdated as EventListener);
     return () => {
-      supabase.removeChannel(channel);
+      window.removeEventListener("chat-created", onCreatedOrUpdated as EventListener);
+      window.removeEventListener("chat-creation-failed", onCreatedOrUpdated as EventListener);
+      cancelAnimationFrame(raf);
     };
   }, [user?.id]);
 
   useEffect(() => {
-    function onCreating(e: any) {
+    function onCreating(e: CustomEvent<ChatCreatingDetail>) {
       const detail = e?.detail;
       if (!user?.id || !detail?.id) return;
       setChats((prev) => {
         if (prev.some((c) => c.id === detail.id)) return prev;
-        const temp = { id: detail.id, title: detail.title || "New Chat", isLoading: true, user_id: user.id };
+        const temp: Chat = { 
+          id: detail.id, 
+          title: detail.title || "New Chat", 
+          isLoading: true, 
+          user_id: user.id 
+        };
         return [temp, ...prev];
       });
     }
-    function onCreated(e: any) {
+    function onCreated(e: CustomEvent<ChatCreatedDetail>) {
       const detail = e?.detail;
       if (!user?.id || !detail?.tempId || !detail?.realId) return;
       setChats((prev) => {
         const withoutReal = prev.filter((c) => c.id !== detail.realId);
-        return withoutReal.map((c) => (c.id === detail.tempId ? { ...(detail.chat || {}), isLoading: false } : c));
+        return withoutReal.map((c) => (c.id === detail.tempId ? { ...(detail.chat || {} as Chat), isLoading: false } : c));
       });
     }
-    function onFailed(e: any) {
+    function onFailed(e: CustomEvent<ChatFailedDetail>) {
       const detail = e?.detail;
       if (!detail?.id) return;
       setChats((prev) => prev.filter((c) => c.id !== detail.id));
     }
-    window.addEventListener("chat-creating", onCreating as any);
-    window.addEventListener("chat-created", onCreated as any);
-    window.addEventListener("chat-creation-failed", onFailed as any);
+    window.addEventListener("chat-creating", onCreating as EventListener);
+    window.addEventListener("chat-created", onCreated as EventListener);
+    window.addEventListener("chat-creation-failed", onFailed as EventListener);
     return () => {
-      window.removeEventListener("chat-creating", onCreating as any);
-      window.removeEventListener("chat-created", onCreated as any);
-      window.removeEventListener("chat-creation-failed", onFailed as any);
+      window.removeEventListener("chat-creating", onCreating as EventListener);
+      window.removeEventListener("chat-created", onCreated as EventListener);
+      window.removeEventListener("chat-creation-failed", onFailed as EventListener);
     };
   }, [user?.id]);
 
@@ -163,8 +182,8 @@ export function AppSidebar() {
 
       <SignedOut>
         <SignInButton>
-          <button className="flex font-bold cursor-pointer py-5 justify-start items-center px-5 gap-x-3">
-            <LogIn />
+          <button className="flex font-bold cursor-pointer text-white py-5 justify-start items-center px-5 gap-x-3">
+            <LogIn className="text-white" />
             Login
           </button>
         </SignInButton>
