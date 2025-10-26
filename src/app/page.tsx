@@ -39,10 +39,10 @@ export default function Page() {
       name: "Mistral Small 3.2 24B",
       value: "mistralai/mistral-small-3.2-24b-instruct",
     },
-    {
-      name: "Qwen3 4B Model",
-      value: "qwen/qwen3-4b:free",
-    },
+    // {
+    //   name: "Qwen3 4B Model",
+    //   value: "qwen/qwen3-4b:free",
+    // },
   ];
 
   useEffect(() => {
