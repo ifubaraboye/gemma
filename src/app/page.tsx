@@ -69,7 +69,7 @@ export default function Page() {
 
     try {
       const newChatId = (typeof crypto !== 'undefined' && 'randomUUID' in crypto)
-        ? (crypto as any).randomUUID()
+        ? crypto.randomUUID()
         : `c_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
       const chatTitle = userInput.slice(0, 80) || "New Chat";
 
@@ -144,22 +144,22 @@ export default function Page() {
 
   const markdownComponents: Components = {
     code(props) {
-      const { children, className } = props;
-      const match = /language-(\w+)/.exec(className || "");
-      return match ? (
-        <SyntaxHighlighter
-          PreTag="div"
-          language={match[1]}
-          style={oneDark as any}
-        >
-          {String(children).replace(/\n$/, "")}
-        </SyntaxHighlighter>
-      ) : (
-        <code className="bg-[#2a2a28] px-1.5 py-0.5 rounded text-sm text-orange-300">
-          {children}
-        </code>
-      );
-    },
+       const { children, className } = props;
+    const match = /language-(\w+)/.exec(className || "");
+    return match ? (
+      <SyntaxHighlighter
+        PreTag="div"
+        language={match[1]}
+        style={oneDark}
+      >
+        {String(children).replace(/\n$/, "")}
+      </SyntaxHighlighter>
+    ) : (
+      <code className="bg-[#2a2a28] px-1.5 py-0.5 rounded text-sm text-orange-300">
+        {children}
+      </code>
+    );
+  },
     p: ({ children }) => <p className="mb-3 leading-7">{children}</p>,
     ul: ({ children }) => (
       <ul className="list-disc ml-6 mb-3 space-y-1 text-white">{children}</ul>

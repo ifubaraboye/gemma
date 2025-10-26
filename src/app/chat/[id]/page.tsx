@@ -24,7 +24,6 @@ export default function ChatPage() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [model, setModel] = useState("google/gemini-2.5-flash");
   const [input, setInput] = useState("");
-  const [loading, setLoading] = useState(false);
   const [waiting, setWaiting] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -48,6 +47,7 @@ export default function ChatPage() {
 
     let pendingFromCache = false;
     let cachedMessages: Message[] = [];
+    let cachedModel = model;
 
     try {
       const raw = typeof window !== 'undefined' ? localStorage.getItem(`chat:${chatId}`) : null;
@@ -58,11 +58,14 @@ export default function ChatPage() {
           setMessages(cached.messages);
         }
         if (cached?.model && typeof cached.model === 'string') {
+          cachedModel = cached.model;
           setModel(cached.model);
         }
         pendingFromCache = !!cached?.pending;
       }
-    } catch {}
+    } catch {
+      // Ignore cache errors
+    }
 
     (async () => {
       if (pendingFromCache) return;
@@ -80,15 +83,17 @@ export default function ChatPage() {
                 id: chatId,
                 title: data?.title || cached?.title,
                 messages: data.messages,
-                model: cached?.model || model,
+                model: cached?.model || cachedModel,
                 pending: false,
                 updatedAt: Date.now(),
               }));
-            } catch {}
+            } catch {
+              // Ignore cache errors
+            }
           }
-        } else if (res.status === 404 || res.status === 401) {
         }
-      } catch (e) {
+      } catch {
+        // Ignore fetch errors
       }
     })();
 
@@ -106,7 +111,7 @@ export default function ChatPage() {
         const response = await fetch("/api/chat", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ messages: messagesToSend, model }),
+          body: JSON.stringify({ messages: messagesToSend, model: cachedModel }),
         });
         const reader = response.body?.getReader();
         const decoder = new TextDecoder();
@@ -125,7 +130,9 @@ export default function ChatPage() {
                 const parsed = JSON.parse(data);
                 const delta = parsed.choices?.[0]?.delta?.content;
                 if (delta) assistantMessage += delta;
-              } catch {}
+              } catch {
+                // Ignore parse errors
+              }
             });
             setMessages((prev) => {
               const last = prev[prev.length - 1];
@@ -136,7 +143,9 @@ export default function ChatPage() {
                 const raw = typeof window !== 'undefined' ? localStorage.getItem(`chat:${chatId}`) : null;
                 const cached = raw ? JSON.parse(raw) : {};
                 localStorage.setItem(`chat:${chatId}`, JSON.stringify({ ...cached, messages: next, updatedAt: Date.now() }));
-              } catch {}
+              } catch {
+                // Ignore cache errors
+              }
               return next;
             });
           }
@@ -150,7 +159,9 @@ export default function ChatPage() {
               const raw = typeof window !== 'undefined' ? localStorage.getItem(`chat:${chatId}`) : null;
               const cached = raw ? JSON.parse(raw) : {};
               localStorage.setItem(`chat:${chatId}`, JSON.stringify({ ...cached, messages: finalMessages, pending: false, updatedAt: Date.now() }));
-            } catch {}
+            } catch {
+              // Ignore cache errors
+            }
             (async () => {
               try {
                 await fetch(`/api/chats/${chatId}`, {
@@ -161,7 +172,9 @@ export default function ChatPage() {
                     title: (prev?.[0]?.content || "New Chat").slice(0, 80),
                   }),
                 });
-              } catch {}
+              } catch {
+                // Ignore fetch errors
+              }
             })();
             return finalMessages;
           });
@@ -170,7 +183,7 @@ export default function ChatPage() {
         setWaiting(false);
       }
     })();
-  }, [chatId]);
+  }, [chatId]); // Removed 'model' from dependencies as we use cachedModel
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -188,7 +201,6 @@ export default function ChatPage() {
     const updatedMessages = [...messages, newMessage];
     setMessages(updatedMessages);
     setInput("");
-    setLoading(true);
     setWaiting(true);
 
     // Update chat in database (also set title immediately)
@@ -204,7 +216,9 @@ export default function ChatPage() {
       const raw = typeof window !== 'undefined' ? localStorage.getItem(`chat:${chatId}`) : null;
       const cached = raw ? JSON.parse(raw) : {};
       localStorage.setItem(`chat:${chatId}`, JSON.stringify({ ...cached, messages: updatedMessages, updatedAt: Date.now() }));
-    } catch {}
+    } catch {
+      // Ignore cache errors
+    }
 
     const response = await fetch("/api/chat", {
       method: "POST",
@@ -249,7 +263,9 @@ export default function ChatPage() {
             const raw = typeof window !== 'undefined' ? localStorage.getItem(`chat:${chatId}`) : null;
             const cached = raw ? JSON.parse(raw) : {};
             localStorage.setItem(`chat:${chatId}`, JSON.stringify({ ...cached, messages: next, updatedAt: Date.now() }));
-          } catch {}
+          } catch {
+            // Ignore cache errors
+          }
           return next;
         });
       }
@@ -276,10 +292,11 @@ export default function ChatPage() {
         const raw = typeof window !== 'undefined' ? localStorage.getItem(`chat:${chatId}`) : null;
         const cached = raw ? JSON.parse(raw) : {};
         localStorage.setItem(`chat:${chatId}`, JSON.stringify({ ...cached, messages: finalMessages, pending: false, updatedAt: Date.now() }));
-      } catch {}
+      } catch {
+        // Ignore cache errors
+      }
     }
 
-    setLoading(false);
     setWaiting(false);
   };
 
@@ -295,7 +312,7 @@ export default function ChatPage() {
         <SyntaxHighlighter
           PreTag="div"
           language={match[1]}
-          style={oneDark as any}
+          style={oneDark}
         >
           {String(children).replace(/\n$/, "")}
         </SyntaxHighlighter>
@@ -331,7 +348,7 @@ export default function ChatPage() {
     ),
     a: ({ children, ...props }: React.AnchorHTMLAttributes<HTMLAnchorElement>) => (
       <a
-        {...props} // spreads href, target, rel, className, etc.
+        {...props}
         className="text-blue-400 hover:text-blue-300 underline"
         target="_blank"
         rel="noopener noreferrer"
@@ -385,7 +402,7 @@ export default function ChatPage() {
                       {m.content}
                     </ReactMarkdown>
                     <button onClick={() => copyToClipboard(m.content)}>
-                      <Copy className="h-4 cursor-pointer hover:l" />
+                      <Copy className="h-4 cursor-pointer hover:opacity-70" />
                     </button>
                   </div>
                 )}

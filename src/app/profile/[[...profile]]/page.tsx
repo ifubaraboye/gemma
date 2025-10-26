@@ -7,6 +7,7 @@ import { SignOutButton } from "@clerk/nextjs"
 import { ArrowLeft, Mail, Calendar, LogOut } from "lucide-react"
 import { useRouter } from "next/navigation"
 import { useState } from "react"
+import Image from "next/image"
 
 
 export default function Profile() {
@@ -57,8 +58,13 @@ export default function Profile() {
       })
       setMessage("Profile updated successfully!")
       setIsEditing(false)
-    } catch (error: any) {
-      setMessage(error.errors?.[0]?.message || "Failed to update profile")
+    } catch (error) {
+      if (error && typeof error === 'object' && 'errors' in error) {
+        const clerkError = error as { errors?: Array<{ message?: string }> }
+        setMessage(clerkError.errors?.[0]?.message || "Failed to update profile")
+      } else {
+        setMessage("Failed to update profile")
+      }
     } finally {
       setIsSaving(false)
     }
@@ -79,7 +85,7 @@ export default function Profile() {
       <div className="max-w-2xl mx-auto px-4 py-12">
         <button
           onClick={() => router.back()}
-          className="flex items-center gap-2 mb-12 text-muted-foreground hover:text-foreground transition-colors"
+          className="flex items-center cursor-pointer gap-2 mb-12 text-muted-foreground hover:text-foreground transition-colors"
         >
           <ArrowLeft size={18} />
           <span className="text-sm font-medium">Back</span>
@@ -88,10 +94,12 @@ export default function Profile() {
         <div className="mb-12">
           <div className="flex flex-col items-center text-center">
             {/* Avatar */}
-            <img
-              src={user?.imageUrl || "/placeholder.svg"}
-              alt={user?.fullName || "User"}
-              className="w-32 h-32 rounded-full object-cover mb-6"
+            <Image 
+              src={user?.imageUrl || ""} 
+              alt="Profile" 
+              width={100} 
+              height={100} 
+              className="rounded-full" 
             />
 
             {/* User Info */}

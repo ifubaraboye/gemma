@@ -1,8 +1,13 @@
 import { NextResponse } from "next/server";
 
+interface ChatMessage {
+  role: "user" | "assistant" | "system";
+  content: string;
+}
+
 export async function POST(req: Request) {
   try {
-    const { messages, model } = await req.json();
+    const { messages, model }: { messages: ChatMessage[]; model?: string } = await req.json();
 
     if (!process.env.OPENROUTER_API_KEY) {
       return NextResponse.json(
@@ -14,7 +19,7 @@ export async function POST(req: Request) {
     const payload = {
       model: model || "openai/gpt-4o-mini",
       stream: true,
-      messages: (messages || []).map((m: any) => ({
+      messages: (messages || []).map((m: ChatMessage) => ({
         role: m.role,
         content: m.content,
       })),
@@ -42,10 +47,8 @@ export async function POST(req: Request) {
     headers.set("Connection", "keep-alive");
 
     return new Response(upstream.body, { headers });
-  } catch (e: any) {
-    return NextResponse.json(
-      { error: e?.message || "Internal Server Error" },
-      { status: 500 }
-    );
+  } catch (e: unknown) {
+    const error = e instanceof Error ? e.message : "Internal Server Error";
+    return NextResponse.json({ error }, { status: 500 });
   }
 }
