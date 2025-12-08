@@ -28,6 +28,37 @@ export default function ChatPage() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const streamStartedRef = useRef(false);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const userScrolledUpRef = useRef(false);
+  const isProgrammaticScrollRef = useRef(false);
+  const scrollTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Check if user is near bottom of chat (within 150px)
+  const isNearBottom = () => {
+    const container = scrollContainerRef.current;
+    if (!container) return true;
+    const threshold = 150;
+    return container.scrollHeight - container.scrollTop - container.clientHeight < threshold;
+  };
+
+  // Handle scroll events to detect when user scrolls up
+  const handleScroll = () => {
+    // Ignore programmatic scrolls
+    if (isProgrammaticScrollRef.current) return;
+
+    // Debounce the scroll detection to avoid false positives
+    if (scrollTimeoutRef.current) {
+      clearTimeout(scrollTimeoutRef.current);
+    }
+
+    scrollTimeoutRef.current = setTimeout(() => {
+      if (!isNearBottom()) {
+        userScrolledUpRef.current = true;
+      } else {
+        userScrolledUpRef.current = false;
+      }
+    }, 100);
+  };
 
   const models = [
     { name: "Gemini 2.5 Flash", value: "google/gemini-2.5-flash" },
@@ -186,12 +217,30 @@ export default function ChatPage() {
   }, [chatId]); // Removed 'model' from dependencies as we use cachedModel
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+    // Only auto-scroll if user hasn't scrolled up
+    if (!userScrolledUpRef.current) {
+      // Set programmatic scroll flag
+      isProgrammaticScrollRef.current = true;
+
+      // Use instant scroll during streaming to prevent flickering
+      // Use smooth scroll when not streaming for better UX
+      messagesEndRef.current?.scrollIntoView({
+        behavior: waiting ? "auto" : "smooth"
+      });
+
+      // Clear the programmatic scroll flag after a short delay
+      setTimeout(() => {
+        isProgrammaticScrollRef.current = false;
+      }, 100);
+    }
+  }, [messages, waiting]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!input.trim()) return;
+
+    // Reset scroll state so auto-scroll resumes for new messages
+    userScrolledUpRef.current = false;
 
     const newMessage: Message = {
       id: Date.now().toString(),
@@ -377,19 +426,23 @@ export default function ChatPage() {
 
   return (
     <div className="flex flex-col h-screen bg-[#1a1a18] text-white">
-      <div className="flex-1 overflow-y-auto pb-6">
+      <div
+        ref={scrollContainerRef}
+        onScroll={handleScroll}
+        className="flex-1 overflow-y-auto pb-6"
+      >
         <div className="max-w-4xl mx-auto px-8 py-12 space-y-6">
           {messages.map((m) => (
             <div
               key={m.id}
-              className={`flex ${
-                m.role === "user" ? "justify-end" : "justify-start"
-              }`}
+              className={`flex ${m.role === "user" ? "justify-end" : "justify-start"
+                }`}
             >
               <div
-                className={`rounded-lg px-6 py-3 max-w-4xl mb-4 ${
-                  m.role === "user" ? "bg-[#252724]" : ""
-                }`}
+                className={`rounded-lg px-6 py-3 mb-4 ${m.role === "user"
+                  ? "bg-[#252724] max-w-[75%]"
+                  : "max-w-4xl"
+                  }`}
               >
                 {m.role === "user" ? (
                   <p className="text-white whitespace-pre-wrap">{m.content}</p>
