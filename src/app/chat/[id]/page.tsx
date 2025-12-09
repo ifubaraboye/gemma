@@ -214,6 +214,7 @@ export default function ChatPage() {
         setWaiting(false);
       }
     })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chatId]); // Removed 'model' from dependencies as we use cachedModel
 
   useEffect(() => {
