@@ -4,28 +4,28 @@ import { useState, useRef, useEffect } from "react";
 import { 
   Send, 
   Copy, 
-  Bot, 
   Sparkles, 
   ChevronUp, 
   Cpu,
-  Check
+  Check,
+  AlertCircle
 } from "lucide-react";
 
-// Import Shadcn Dropdown Components
 import {
   DropdownMenu,
   DropdownMenuContent,
-  DropdownMenuItem, // Switched to MenuItem for custom layout
+  DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 
 // --- Configuration ---
+const API_URL = "http://localhost:3001/chat";
+
 const AVAILABLE_MODELS = [
   { id: "google/gemini-2.5-flash", name: "Gemini 2.5 Flash" },
-  { id: "mistralai/mistral-small-3.2-24b-instruct", name: "Mistral Small 3.2" },
-  { id: "openai/gpt-4o-mini", name: "GPT-4o Mini" },
-  { id: "meta-llama/llama-3.3-70b-instruct", name: "Llama 3.3 70B" },
-  { id: "deepseek/deepseek-r1", name: "DeepSeek R1" },
+  { id: "allenai/olmo-3.1-32b-think:free", name:"Olmo 3.1B Thinking"},
+  { id: "mistralai/devstral-2512:free", name:"Mistral: Devstral"},
+  { id: "openai/gpt-oss-120b:free", name:"GPT-OSS 120B"}
 ];
 
 interface Message {
@@ -35,16 +35,17 @@ interface Message {
 }
 
 export default function ChatPage() {
-  // --- State ---
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
-  const [selectedModels, setSelectedModels] = useState<string[]>([AVAILABLE_MODELS[0].id]);
+  const [selectedModels, setSelectedModels] = useState<string[]>([
+    AVAILABLE_MODELS[0].id
+  ]);
   const [loading, setLoading] = useState(false);
-  
+  const [error, setError] = useState<string | null>(null);
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  // --- Effects ---
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, loading]);
@@ -52,15 +53,17 @@ export default function ChatPage() {
   useEffect(() => {
     if (textareaRef.current) {
       textareaRef.current.style.height = "auto";
-      textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 200)}px`;
+      textareaRef.current.style.height = `${Math.min(
+        textareaRef.current.scrollHeight,
+        200
+      )}px`;
     }
   }, [input]);
 
-  // --- Handlers ---
   const toggleModel = (id: string) => {
     setSelectedModels((prev) => {
       if (prev.includes(id)) {
-        if (prev.length === 1) return prev; 
+        if (prev.length === 1) return prev;
         return prev.filter((m) => m !== id);
       }
       return [...prev, id];
@@ -68,9 +71,10 @@ export default function ChatPage() {
   };
 
   const getModelLabel = () => {
-    if (selectedModels.length === 0) return "Select Model";
     if (selectedModels.length === 1) {
-      return AVAILABLE_MODELS.find(m => m.id === selectedModels[0])?.name;
+      return AVAILABLE_MODELS.find(
+        (m) => m.id === selectedModels[0]
+      )?.name;
     }
     return `${selectedModels.length} models`;
   };
@@ -79,9 +83,14 @@ export default function ChatPage() {
     navigator.clipboard.writeText(text);
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  // ------------------------------
+  // SUBMIT (Streaming SSE)
+  // ------------------------------
+  const handleSubmit = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
     if (!input.trim() || loading) return;
+
+    setError(null);
 
     const userMsg: Message = {
       id: Date.now().toString(),
@@ -89,27 +98,103 @@ export default function ChatPage() {
       content: input.trim(),
     };
 
-    setMessages((prev) => [...prev, userMsg]);
+    const newMessages = [...messages, userMsg];
+    setMessages(newMessages);
     setInput("");
     setLoading(true);
 
-    if (textareaRef.current) textareaRef.current.style.height = "auto";
+    // Create placeholder for assistant message
+    const assistantId = (Date.now() + 1).toString();
+    const assistantMsg: Message = {
+      id: assistantId,
+      role: "assistant",
+      content: "",
+    };
+    
+    setMessages((prev) => [...prev, assistantMsg]);
 
-    setTimeout(() => {
-      const aiMsg: Message = {
-        id: (Date.now() + 1).toString(),
-        role: "assistant",
-        content: `Response simulated from **${selectedModels.length}** models.\nSelected: ${selectedModels.join(", ")}`,
-      };
-      setMessages((prev) => [...prev, aiMsg]);
+    try {
+      const res = await fetch(API_URL, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: selectedModels[0],
+          messages: newMessages.map((m) => ({
+            role: m.role,
+            content: m.content,
+          })),
+        }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || "Request failed");
+      }
+
+      const reader = res.body?.getReader();
+      const decoder = new TextDecoder();
+
+      if (!reader) {
+        throw new Error("No response body");
+      }
+
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        
+        // Keep the last incomplete line in the buffer
+        buffer = lines.pop() || "";
+
+        for (const line of lines) {
+          const trimmed = line.trim();
+          
+          if (!trimmed || trimmed === "data: [DONE]") continue;
+          
+          if (trimmed.startsWith("data: ")) {
+            try {
+              const jsonStr = trimmed.slice(6); // Remove "data: " prefix
+              const parsed = JSON.parse(jsonStr);
+              
+              const delta = parsed.choices?.[0]?.delta?.content;
+              
+              if (delta) {
+                setMessages((prev) =>
+                  prev.map((msg) =>
+                    msg.id === assistantId
+                      ? { ...msg, content: msg.content + delta }
+                      : msg
+                  )
+                );
+              }
+            } catch (parseError) {
+              console.error("Failed to parse SSE chunk:", parseError);
+            }
+          }
+        }
+      }
+    } catch (err: any) {
+      console.error(err);
+      setError(err.message || "Something went wrong");
+      
+      // Remove the empty assistant message on error
+      setMessages((prev) => prev.filter((msg) => msg.id !== assistantId));
+    } finally {
       setLoading(false);
-    }, 1000);
+    }
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
-      handleSubmit(e);
+      handleSubmit();
     }
   };
 
@@ -118,7 +203,7 @@ export default function ChatPage() {
       
       {/* 1. Main Chat Area */}
       <main className="flex-1 overflow-y-auto custom-scrollbar">
-        <div className="max-w-3xl mx-auto px-4 py-12 space-y-8">
+        <div className="max-w-[800px] mx-auto px-4 py-12 space-y-8">
           
           {/* Empty State */}
           {messages.length === 0 && (
@@ -147,12 +232,14 @@ export default function ChatPage() {
                 className={`relative px-5 py-3.5 max-w-[85%] rounded-2xl text-[15px] leading-relaxed shadow-sm group ${
                   m.role === "user"
                     ? "bg-[#18181b] text-white font-medium"
-                    : "text-white min-w-[200px]"
+                    : "text-zinc-100 min-w-[200px]"
                 }`}
               >
                 <div className="whitespace-pre-wrap font-normal">{m.content}</div>
+                {/* {console.log(messages)} */}
+
                 
-                {m.role === "assistant" && (
+                {m.role === "assistant" && m.content && (
                    <button 
                    onClick={() => copyToClipboard(m.content)}
                    className="absolute bottom-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity p-1.5 hover:bg-zinc-700/50 rounded-md cursor-pointer"
@@ -174,13 +261,23 @@ export default function ChatPage() {
              </div>
           )}
 
+          {/* Error Message */}
+          {error && (
+            <div className="flex justify-center">
+              <div className="flex items-center gap-2 px-4 py-2 text-sm text-red-400 bg-red-950/20 border border-red-900/50 rounded-lg">
+                <AlertCircle className="w-4 h-4" />
+                <span>{error}</span>
+              </div>
+            </div>
+          )}
+
           <div ref={messagesEndRef} />
         </div>
       </main>
 
       {/* 2. Input Area (Floating) */}
       <div className="p-4 bg-gradient-to-t from-[#09090b] via-[#09090b] to-transparent z-10">
-        <div className="max-w-3xl mx-auto">
+        <div className="max-w-[800px] mx-auto">
           {/* Input Container */}
           <div className="relative bg-[#18181b] border border-zinc-800 rounded-3xl p-3 shadow-2xl focus-within:ring-1 focus-within:ring-zinc-700 transition-all duration-300">
             
@@ -216,13 +313,11 @@ export default function ChatPage() {
                   align="start" 
                   sideOffset={8}
                 >
-                  
                   {AVAILABLE_MODELS.map((m) => {
                     const isSelected = selectedModels.includes(m.id);
                     return (
                       <DropdownMenuItem
                         key={m.id}
-                        // Use onSelect + e.preventDefault() to act as a toggle without closing menu
                         onSelect={(e) => {
                           e.preventDefault();
                           toggleModel(m.id);
@@ -230,11 +325,11 @@ export default function ChatPage() {
                         className={`
                           flex items-center justify-between text-sm px-2 py-2.5 rounded-md cursor-pointer
                           focus:bg-zinc-800 focus:text-zinc-100
-                          ${isSelected ? "text-zinc-100 " : "text-zinc-400"}
+                          ${isSelected ? "text-zinc-100" : "text-zinc-400"}
                         `}
                       >
                         <span>{m.name}</span>
-                        {isSelected && <Check className="w-4 h-4 text-gray-600" />}
+                        {isSelected && <Check className="w-4 h-4 text-gray-500" />}
                       </DropdownMenuItem>
                     );
                   })}
@@ -244,7 +339,7 @@ export default function ChatPage() {
               {/* Send Button */}
               <div className="flex gap-2">
                 <button
-                  onClick={handleSubmit}
+                  onClick={() => handleSubmit()}
                   disabled={!input.trim() || loading}
                   className={`
                     h-9 w-9 rounded-full flex items-center justify-center transition-all shadow-lg
