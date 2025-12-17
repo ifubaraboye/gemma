@@ -1,4 +1,4 @@
-[] - Promting model
+[*] - Promting model
 [] - Routing
-[] - Database
+[*] - Database
 [] -  Multi Model Selection
