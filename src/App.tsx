@@ -20,8 +20,9 @@ import {
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
-// --- Configuration ---
-const API_URL = "http://localhost:3001/chat";
+import { useMutation, useQuery } from "convex/react";
+import { api } from "../convex/_generated/api";
+import type { Id } from "../convex/_generated/dataModel";
 
 const AVAILABLE_MODELS = [
   { id: "google/gemini-2.5-flash", name: "Gemini 2.5 Flash" },
@@ -33,9 +34,9 @@ const AVAILABLE_MODELS = [
 ];
 
 interface Message {
-  id: string;
   role: "user" | "assistant";
   content: string;
+  timestamp: number;
 }
 
 export default function ChatPage() {
@@ -46,9 +47,21 @@ export default function ChatPage() {
   ]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [chatId, setChatId] = useState<Id<"chat"> | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  const createChat = useMutation(api.chat.createChat);
+  const addMessage = useMutation(api.chat.addMessage);
+  const chat = useQuery(api.chat.getChat, chatId ? { chatId } : "skip");
+
+  // Load messages when chat changes, BUT NOT while streaming (loading)
+  useEffect(() => {
+    if (chat?.messages && !loading) {
+      setMessages(chat.messages);
+    }
+  }, [chat, loading]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -87,48 +100,50 @@ export default function ChatPage() {
     navigator.clipboard.writeText(text);
   };
 
-  // ------------------------------
-  // SUBMIT (Streaming SSE)
-  // ------------------------------
   const handleSubmit = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     if (!input.trim() || loading) return;
 
     setError(null);
+    let activeChatId = chatId;
 
-    const userMsg: Message = {
-      id: Date.now().toString(),
-      role: "user",
-      content: input.trim(),
-    };
+    // Create chat if it doesn't exist
+    if (!activeChatId) {
+      activeChatId = await createChat({ title: input.slice(0, 50) });
+      setChatId(activeChatId);
+    }
 
-    const newMessages = [...messages, userMsg];
-    setMessages(newMessages);
+    const userInput = input.trim();
     setInput("");
-    setLoading(true);
+    setLoading(true); // This now blocks the useEffect from overwriting us
 
-    // Create placeholder for assistant message
-    const assistantId = (Date.now() + 1).toString();
-    const assistantMsg: Message = {
-      id: assistantId,
-      role: "assistant",
-      content: "",
-    };
-    
-    setMessages((prev) => [...prev, assistantMsg]);
+    // Calculate index: Current length + 1 (User msg) = Assistant starts at length + 1
+    const assistantIndex = messages.length + 1;
+
+    // Optimistically add User + Placeholder Assistant
+    setMessages((prev) => [
+      ...prev,
+      { role: "user", content: userInput, timestamp: Date.now() },
+      { role: "assistant", content: "", timestamp: Date.now() }
+    ]);
+
+    // Save User message to DB
+    await addMessage({
+      chatId: activeChatId,
+      role: "user",
+      content: userInput,
+    });
 
     try {
-      const res = await fetch(API_URL, {
+      const res = await fetch("http://localhost:3001/chat", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           model: selectedModels[0],
-          messages: newMessages.map((m) => ({
-            role: m.role,
-            content: m.content,
-          })),
+          messages: [
+            ...messages.map((m) => ({ role: m.role, content: m.content })),
+            { role: "user", content: userInput }
+          ],
         }),
       });
 
@@ -139,44 +154,42 @@ export default function ChatPage() {
 
       const reader = res.body?.getReader();
       const decoder = new TextDecoder();
-
-      if (!reader) {
-        throw new Error("No response body");
-      }
+      if (!reader) throw new Error("No response body");
 
       let buffer = "";
+      let finalAssistantContent = "";
 
       while (true) {
         const { done, value } = await reader.read();
-        
         if (done) break;
 
         buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split("\n");
-        
-        // Keep the last incomplete line in the buffer
         buffer = lines.pop() || "";
 
         for (const line of lines) {
           const trimmed = line.trim();
-          
           if (!trimmed || trimmed === "data: [DONE]") continue;
-          
+
           if (trimmed.startsWith("data: ")) {
             try {
-              const jsonStr = trimmed.slice(6); // Remove "data: " prefix
-              const parsed = JSON.parse(jsonStr);
-              
+              const parsed = JSON.parse(trimmed.slice(6));
               const delta = parsed.choices?.[0]?.delta?.content;
-              
               if (delta) {
-                setMessages((prev) =>
-                  prev.map((msg) =>
-                    msg.id === assistantId
-                      ? { ...msg, content: msg.content + delta }
-                      : msg
-                  )
-                );
+                finalAssistantContent += delta;
+                
+                // Update local state directly
+                setMessages((prev) => {
+                  const updated = [...prev];
+                  // Safety check to ensure we are updating the correct index
+                  if (updated[assistantIndex]) {
+                    updated[assistantIndex] = {
+                      ...updated[assistantIndex],
+                      content: finalAssistantContent, // Use the accumulated content
+                    };
+                  }
+                  return updated;
+                });
               }
             } catch (parseError) {
               console.error("Failed to parse SSE chunk:", parseError);
@@ -184,14 +197,21 @@ export default function ChatPage() {
           }
         }
       }
+
+      // Save complete assistant message to DB
+      await addMessage({
+        chatId: activeChatId,
+        role: "assistant",
+        content: finalAssistantContent,
+      });
+
     } catch (err: any) {
       console.error(err);
       setError(err.message || "Something went wrong");
-      
-      // Remove the empty assistant message on error
-      setMessages((prev) => prev.filter((msg) => msg.id !== assistantId));
+      // Remove the placeholder if it failed
+      setMessages((prev) => prev.filter((_, i) => i !== assistantIndex));
     } finally {
-      setLoading(false);
+      setLoading(false); // Re-enables the useEffect sync
     }
   };
 
@@ -204,12 +224,8 @@ export default function ChatPage() {
 
   return (
     <div className="flex flex-col h-screen bg-[#09090b] text-zinc-100 font-sans selection:bg-zinc-800">
-      
-      {/* 1. Main Chat Area */}
       <main className="flex-1 overflow-y-auto custom-scrollbar">
         <div className="max-w-[800px] mx-auto px-4 py-12 space-y-8">
-          
-          {/* Empty State */}
           {messages.length === 0 && (
             <div className="flex flex-col items-center justify-center h-[70vh] text-center opacity-0 animate-in fade-in zoom-in duration-500">
               <div className="w-16 h-16 bg-zinc-900 rounded-2xl flex items-center justify-center mb-6 border border-zinc-800 shadow-xl">
@@ -224,52 +240,43 @@ export default function ChatPage() {
             </div>
           )}
 
-          {/* Messages */}
-          {messages.map((m) => (
-            <div
-              key={m.id}
-              className={`flex gap-4 ${
-                m.role === "user" ? "justify-end" : "justify-start"
-              }`}
-            >
-              <div
-                className={`relative px-5 py-3.5 max-w-[85%] rounded-2xl text-[15px] leading-relaxed shadow-sm group ${
-                  m.role === "user"
-                    ? "bg-[#18181b] text-white font-medium"
-                    : "text-zinc-100 min-w-[200px]"
-                }`}
-              >
-                <div className="whitespace-pre-wrap font-normal">
-                  <Markdown remarkPlugins={[remarkGfm]}>
-                  {m.content}
-                  </Markdown>
-                  </div>
-                {/* {console.log(messages)} */}
+          {messages.map((m, idx) => (
+  <div
+    key={idx}
+    className={`flex gap-4 ${m.role === "user" ? "justify-end" : "justify-start"}`}
+  >
+    <div
+      className={`relative text-[15px] leading-relaxed group ${
+        m.role === "user"
+          ? "px-5 py-3.5 rounded-2xl bg-[#18181b] text-white font-medium shadow-sm max-w-[85%]" // USER: Bubble style
+          : "text-zinc-100 w-full px-0 py-2" // ASSISTANT: Full width, no bg, no padding-x
+      }`}
+    >
+      <div className="whitespace-pre-wrap font-normal">
+        <Markdown remarkPlugins={[remarkGfm]}>{m.content}</Markdown>
+      </div>
 
-                
-                {m.role === "assistant" && m.content && (
-                   <button 
-                   onClick={() => copyToClipboard(m.content)}
-                   className="absolute bottom-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity p-1.5 hover:bg-zinc-700/50 rounded-md cursor-pointer"
-                   title="Copy response"
-                 >
-                   <Copy className="w-3.5 h-3.5 text-zinc-500 hover:text-zinc-300" />
-                 </button>
-                )}
+      {m.role === "assistant" && m.content && (
+        <button
+          onClick={() => copyToClipboard(m.content)}
+          className="absolute -bottom-6 left-0 opacity-0 group-hover:opacity-100 transition-opacity p-1.5 hover:bg-zinc-800/50 rounded-md cursor-pointer text-zinc-500 hover:text-zinc-300"
+          title="Copy response"
+        >
+          <Copy className="w-3.5 h-3.5" />
+        </button>
+      )}
+    </div>
+  </div>
+))}
+
+          {loading && (
+            <div className="flex gap-4">
+              <div className="flex items-center gap-1.5 h-10 px-2">
+                <span className="w-4 h-4 bg-white rounded-full animate-pulse [animation-delay:-0.3s]"></span>
               </div>
             </div>
-          ))}
-
-          {/* Loading Indicator */}
-          {loading && (
-             <div className="flex gap-4">
-               <div className="flex items-center gap-1.5 h-10 px-2">
-                 <span className="w-4 h-4 bg-white rounded-full animate-pulse [animation-delay:-0.3s]"></span>
-               </div>
-             </div>
           )}
 
-          {/* Error Message */}
           {error && (
             <div className="flex justify-center">
               <div className="flex items-center gap-2 px-4 py-2 text-sm text-red-400 bg-red-950/20 border border-red-900/50 rounded-lg">
@@ -283,12 +290,9 @@ export default function ChatPage() {
         </div>
       </main>
 
-      {/* 2. Input Area (Floating) */}
       <div className="p-4 bg-gradient-to-t from-[#09090b] via-[#09090b] to-transparent z-10">
         <div className="max-w-[800px] mx-auto">
-          {/* Input Container */}
           <div className="relative bg-[#18181b] border border-zinc-800 rounded-3xl p-3 shadow-2xl focus-within:ring-1 focus-within:ring-zinc-700 transition-all duration-300">
-            
             <textarea
               ref={textareaRef}
               value={input}
@@ -299,10 +303,7 @@ export default function ChatPage() {
               rows={1}
             />
 
-            {/* Bottom Toolbar */}
             <div className="flex justify-between items-center mt-2 px-1">
-              
-              {/* SHADCN DROPDOWN MENU FOR MULTI-SELECT */}
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <button
@@ -330,11 +331,7 @@ export default function ChatPage() {
                           e.preventDefault();
                           toggleModel(m.id);
                         }}
-                        className={`
-                          flex items-center justify-between text-sm px-2 py-2.5 rounded-md cursor-pointer
-                          focus:bg-zinc-800 focus:text-zinc-100
-                          ${isSelected ? "text-zinc-100" : "text-zinc-400"}
-                        `}
+                        className={`flex items-center justify-between text-sm px-2 py-2.5 rounded-md cursor-pointer focus:bg-zinc-800 focus:text-zinc-100 ${isSelected ? "text-zinc-100" : "text-zinc-400"}`}
                       >
                         <span>{m.name}</span>
                         {isSelected && <Check className="w-4 h-4 text-gray-500" />}
@@ -344,17 +341,15 @@ export default function ChatPage() {
                 </DropdownMenuContent>
               </DropdownMenu>
 
-              {/* Send Button */}
               <div className="flex gap-2">
                 <button
                   onClick={() => handleSubmit()}
                   disabled={!input.trim() || loading}
-                  className={`
-                    h-9 w-9 rounded-full flex items-center justify-center transition-all shadow-lg
-                    ${!input.trim() || loading 
+                  className={`h-9 w-9 rounded-full flex items-center justify-center transition-all shadow-lg ${
+                    !input.trim() || loading 
                       ? "bg-zinc-800 text-zinc-600 cursor-not-allowed" 
-                      : "bg-zinc-100 hover:bg-zinc-300 text-zinc-950 cursor-pointer"}
-                  `}
+                      : "bg-zinc-100 hover:bg-zinc-300 text-zinc-950 cursor-pointer"
+                  }`}
                 >
                   <Send className="w-4 h-4" />
                 </button>
