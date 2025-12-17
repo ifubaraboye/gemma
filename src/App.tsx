@@ -17,6 +17,8 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import Markdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 // --- Configuration ---
 const API_URL = "http://localhost:3001/chat";
@@ -25,7 +27,9 @@ const AVAILABLE_MODELS = [
   { id: "google/gemini-2.5-flash", name: "Gemini 2.5 Flash" },
   { id: "allenai/olmo-3.1-32b-think:free", name:"Olmo 3.1B Thinking"},
   { id: "mistralai/devstral-2512:free", name:"Mistral: Devstral"},
-  { id: "openai/gpt-oss-120b:free", name:"GPT-OSS 120B"}
+  { id: "openai/gpt-oss-120b:free", name:"GPT-OSS 120B"},
+  { id: "moonshotai/kimi-k2:free", name:"Kimi K2"},
+  { id: "qwen/qwen3-4b:free", name:"Qwen 3 4B"}
 ];
 
 interface Message {
@@ -235,7 +239,11 @@ export default function ChatPage() {
                     : "text-zinc-100 min-w-[200px]"
                 }`}
               >
-                <div className="whitespace-pre-wrap font-normal">{m.content}</div>
+                <div className="whitespace-pre-wrap font-normal">
+                  <Markdown remarkPlugins={[remarkGfm]}>
+                  {m.content}
+                  </Markdown>
+                  </div>
                 {/* {console.log(messages)} */}
 
                 
