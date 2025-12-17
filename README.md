@@ -1,4 +1,4 @@
 [*] - Promting model
-[] - Routing
+[*] - Routing
 [*] - Database
-[] -  Multi Model Selection
+[] -  Multi Model Selection / Agent Mode

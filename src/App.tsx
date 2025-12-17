@@ -19,6 +19,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 
+import { Switch } from "@/components/ui/switch";
+import { Label } from "@/components/ui/label";
 import { SidebarTrigger } from "@/components/ui/sidebar";
 
 import Markdown from "react-markdown";
@@ -52,7 +54,6 @@ type LayoutContext = {
 export default function ChatPage() {
   const navigate = useNavigate();
   
-  // 1. FIX: Initialize from localStorage to prevent reset on reload/navigation
   const [selectedModels, setSelectedModels] = useState<string[]>(() => {
     if (typeof window !== "undefined") {
       const saved = localStorage.getItem("selectedModel");
@@ -61,7 +62,15 @@ export default function ChatPage() {
     return [AVAILABLE_MODELS[0].id];
   });
 
-  // 2. FIX: Save to localStorage whenever selection changes
+  const [isAgent, setIsAgent] = useState(false);
+
+  // Effect: Enforce single selection when Agent mode is turned off
+  useEffect(() => {
+    if (!isAgent && selectedModels.length > 1) {
+      setSelectedModels([selectedModels[0]]);
+    }
+  }, [isAgent, selectedModels]);
+
   useEffect(() => {
     localStorage.setItem("selectedModel", JSON.stringify(selectedModels));
   }, [selectedModels]);
@@ -85,8 +94,6 @@ export default function ChatPage() {
   );
 
   useEffect(() => {
-    // Only update messages from DB if we aren't currently loading/streaming 
-    // to prevent the DB state from overwriting optimistic UI updates
     if (chat?.messages && !loading) {
       setMessages(chat.messages);
     }
@@ -108,8 +115,14 @@ export default function ChatPage() {
 
   const toggleModel = (id: string) => {
     setSelectedModels((prev) => {
+      // If NOT in agent mode, behave like a radio button (replace selection)
+      if (!isAgent) {
+        return [id];
+      }
+
+      // If in agent mode, behave like a checkbox (toggle)
       if (prev.includes(id)) {
-        if (prev.length === 1) return prev;
+        if (prev.length === 1) return prev; // Keep at least one
         return prev.filter((m) => m !== id);
       }
       return [...prev, id];
@@ -136,14 +149,9 @@ export default function ChatPage() {
     setError(null);
     let activeChatId = chatId;
 
-    // Create new chat if none exists
     if (!activeChatId) {
       activeChatId = await createChat({ title: input.slice(0, 50) });
       setActiveChatId(activeChatId);
-      
-      // 3. FIX: Use history.pushState instead of navigate()
-      // navigate() forces a Router re-check which can unmount the component, killing the stream.
-      // pushState updates the URL silently so the user sees the new ID, but the component stays alive.
       window.history.pushState({}, "", `/chat/${activeChatId}`);
     }
 
@@ -153,14 +161,12 @@ export default function ChatPage() {
 
     const assistantIndex = messages.length + 1;
 
-    // Optimistic UI update
     setMessages((prev) => [
       ...prev,
       { role: "user", content: userInput, timestamp: Date.now() },
       { role: "assistant", content: "", timestamp: Date.now() }
     ]);
 
-    // Save user message to DB
     await addMessage({
       chatId: activeChatId,
       role: "user",
@@ -172,7 +178,9 @@ export default function ChatPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          model: selectedModels[0],
+          model: selectedModels[0], // Backend might handle array if isAgent is true
+          models: selectedModels,   // Sending array for Agent mode support
+          isAgentMode: isAgent,
           messages: [
             ...messages.map((m) => ({ role: m.role, content: m.content })),
             { role: "user", content: userInput }
@@ -213,7 +221,6 @@ export default function ChatPage() {
                 
                 setMessages((prev) => {
                   const updated = [...prev];
-                  // Ensure we are updating the specific assistant message we added earlier
                   if (updated[assistantIndex]) {
                     updated[assistantIndex] = {
                       ...updated[assistantIndex],
@@ -339,42 +346,74 @@ export default function ChatPage() {
             />
 
             <div className="flex justify-between items-center mt-2 px-1">
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <button
-                    type="button"
-                    className="flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium transition-all border border-transparent cursor-pointer text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800/50 data-[state=open]:bg-zinc-800 data-[state=open]:text-zinc-200 focus:outline-none"
-                  >
-                    <Cpu className="w-3.5 h-3.5" />
-                    <span className="max-w-[120px] truncate">{getModelLabel()}</span>
-                    <ChevronUp className="w-3 h-3 opacity-50 transition-transform duration-200" />
-                  </button>
-                </DropdownMenuTrigger>
+              <div className="flex items-center gap-3">
                 
-                <DropdownMenuContent 
-                  className="w-64 bg-[#18181b] border-zinc-800 text-zinc-300 p-1.5" 
-                  side="top" 
-                  align="start" 
-                  sideOffset={8}
-                >
-                  {AVAILABLE_MODELS.map((m) => {
-                    const isSelected = selectedModels.includes(m.id);
-                    return (
-                      <DropdownMenuItem
-                        key={m.id}
-                        onSelect={(e) => {
-                          e.preventDefault();
-                          toggleModel(m.id);
-                        }}
-                        className={`flex items-center justify-between text-sm px-2 py-2.5 rounded-md cursor-pointer focus:bg-zinc-800 focus:text-zinc-100 ${isSelected ? "text-zinc-100" : "text-zinc-400"}`}
-                      >
-                        <span>{m.name}</span>
-                        {isSelected && <Check className="w-4 h-4 text-gray-500" />}
-                      </DropdownMenuItem>
-                    );
-                  })}
-                </DropdownMenuContent>
-              </DropdownMenu>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <button
+                      type="button"
+                      className="flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium transition-all border border-transparent cursor-pointer text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800/50 data-[state=open]:bg-zinc-800 data-[state=open]:text-zinc-200 focus:outline-none"
+                    >
+                      <Cpu className="w-3.5 h-3.5" />
+                      <span className="max-w-[120px] truncate">{getModelLabel()}</span>
+                      <ChevronUp className="w-3 h-3 opacity-50 transition-transform duration-200" />
+                    </button>
+                  </DropdownMenuTrigger>
+                  
+                  <DropdownMenuContent 
+                    className="w-64 bg-[#18181b] border-zinc-800 text-zinc-300 p-1.5 shadow-xl" 
+                    side="top" 
+                    align="start" 
+                    sideOffset={8}
+                  >
+                    {AVAILABLE_MODELS.map((m) => {
+                      const isSelected = selectedModels.includes(m.id);
+                      return (
+                        <DropdownMenuItem
+                          key={m.id}
+                          onSelect={(e) => {
+                            e.preventDefault();
+                            toggleModel(m.id);
+                          }}
+                          className={`flex items-center gap-3 text-sm px-2 py-2.5 rounded-md cursor-pointer focus:bg-zinc-800 focus:text-zinc-100 ${isSelected ? "text-zinc-100" : "text-zinc-400"}`}
+                        >
+                          {/* Custom Checkbox/Radio Visual */}
+                          <div 
+                            className={`
+                              flex items-center justify-center w-4 h-4  border transition-all
+                              ${isSelected 
+                                ? "bg-zinc-100 border-zinc-100 text-black" 
+                                : "border-zinc-600 bg-transparent hover:border-zinc-500"
+                              }
+                            `}
+                          >
+                            {isSelected && <Check className="w-3 h-3 stroke-[3]" />}
+                          </div>
+                          
+                          <span>{m.name}</span>
+                        </DropdownMenuItem>
+                      );
+                    })}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+
+                <div className="flex items-center space-x-2 pl-2 border-l border-zinc-800">
+                  <Switch 
+                    id="agent-mode" 
+                    checked={isAgent}
+                    onCheckedChange={setIsAgent}
+                    // Updated colors for better visibility (Emerald when active, Zinc-700 when inactive)
+                    className="scale-75 data-[state=checked]:bg-emerald-500 data-[state=unchecked]:bg-zinc-700 border border-zinc-600 data-[state=checked]:border-emerald-500 transition-colors"
+                  />
+                  <Label 
+                    htmlFor="agent-mode" 
+                    className={`text-xs font-medium cursor-pointer transition-colors ${isAgent ? "text-emerald-400" : "text-zinc-500 hover:text-zinc-300"}`}
+                  >
+                    Agent
+                  </Label>
+                </div>
+
+              </div>
 
               <div className="flex gap-2">
                 <button

@@ -16,9 +16,11 @@ import {
 import { SidebarTrigger } from "@/components/ui/sidebar";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { Label } from "@/components/ui/label"; // Fixed import
+import { Switch } from "@/components/ui/switch";
 
 import { useMutation, useQuery } from "convex/react";
-import { api } from "../../../convex/_generated/api";
+import { api } from "../../../convex/_generated/api"; // Adjust path if needed
 import type { Id } from "../../../convex/_generated/dataModel";
 
 const AVAILABLE_MODELS = [
@@ -46,6 +48,7 @@ export default function ChatPage() {
   const { activeChatId, setActiveChatId } = useOutletContext<LayoutContext>();
 
   const chatId = paramId ? (paramId as Id<"chat">) : null;
+  const [isAgent, setIsAgent] = useState(false);
 
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
@@ -59,28 +62,22 @@ export default function ChatPage() {
   const createChat = useMutation(api.chat.createChat);
   const addMessage = useMutation(api.chat.addMessage);
 
-  // Sync chatId with layout context so sidebar highlights active chat
+  // Sync chatId with layout context
   useEffect(() => {
     if (chatId) setActiveChatId(chatId);
   }, [chatId, setActiveChatId]);
 
-  // Fetch chat messages
   const chat = useQuery(api.chat.getChat, chatId ? { chatId } : "skip");
 
-useEffect(() => {
-  if (!chatId) {
-    setMessages([]);
-    return;
-  }
-
-  if (chat?.messages && !loading) {
-    setMessages(chat.messages);
-  }
-}, [chat, chatId, loading]);
-
   useEffect(() => {
-    if (chat?.messages && !loading) setMessages(chat.messages);
-  }, [chat, loading]);
+    if (!chatId) {
+      setMessages([]);
+      return;
+    }
+    if (chat?.messages && !loading) {
+      setMessages(chat.messages);
+    }
+  }, [chat, chatId, loading]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -93,11 +90,26 @@ useEffect(() => {
     }
   }, [input]);
 
+  // Enforce single selection if Agent mode is turned off
+  useEffect(() => {
+    if (!isAgent && selectedModels.length > 1) {
+      setSelectedModels([selectedModels[0]]);
+    }
+  }, [isAgent, selectedModels]);
+
   const toggleModel = (id: string) => {
-    setSelectedModels(prev => prev.includes(id) 
-      ? prev.length === 1 ? prev : prev.filter(m => m !== id)
-      : [...prev, id]
-    );
+    setSelectedModels((prev) => {
+      // If NOT in agent mode, behave like a radio button (replace selection)
+      if (!isAgent) {
+        return [id];
+      }
+      // If in agent mode, behave like a checkbox (toggle)
+      if (prev.includes(id)) {
+        if (prev.length === 1) return prev; // Keep at least one
+        return prev.filter((m) => m !== id);
+      }
+      return [...prev, id];
+    });
   };
 
   const getModelLabel = () => selectedModels.length === 1 
@@ -106,7 +118,6 @@ useEffect(() => {
 
   const copyToClipboard = (text: string) => navigator.clipboard.writeText(text);
 
-  // --- handleSubmit and handleKeyDown logic remains exactly as in home page ---
   const handleSubmit = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     if (!input.trim() || loading) return;
@@ -138,6 +149,8 @@ useEffect(() => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           model: selectedModels[0],
+          models: selectedModels, // Pass array for Agent mode
+          isAgentMode: isAgent,   // Pass switch state
           messages: [...messages.map(m => ({ role: m.role, content: m.content })), { role: "user", content: userInput }],
         }),
       });
@@ -192,7 +205,6 @@ useEffect(() => {
     }
   };
 
-  // --- UI layout is exactly the same as your home page ---
   return (
     <div className="flex flex-col h-screen bg-[#09090b] text-zinc-100 font-sans selection:bg-zinc-800 relative">
       <div className="absolute top-3 left-3 z-50">
@@ -269,49 +281,89 @@ useEffect(() => {
               className="w-full bg-transparent text-zinc-200 placeholder:text-zinc-500 text-sm resize-none outline-none max-h-48 min-h-[48px] px-2 py-1 custom-scrollbar"
               rows={1}
             />
-            {/* Models dropdown + send button */}
+
             <div className="flex justify-between items-center mt-2 px-1">
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <button
-                    type="button"
-                    className="flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium transition-all border border-transparent cursor-pointer text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800/50 data-[state=open]:bg-zinc-800 data-[state=open]:text-zinc-200 focus:outline-none"
+              <div className="flex items-center gap-3">
+                
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <button
+                      type="button"
+                      className="flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium transition-all border border-transparent cursor-pointer text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800/50 data-[state=open]:bg-zinc-800 data-[state=open]:text-zinc-200 focus:outline-none"
+                    >
+                      <Cpu className="w-3.5 h-3.5" />
+                      <span className="max-w-[120px] truncate">{getModelLabel()}</span>
+                      <ChevronUp className="w-3 h-3 opacity-50 transition-transform duration-200" />
+                    </button>
+                  </DropdownMenuTrigger>
+                  
+                  <DropdownMenuContent 
+                    className="w-64 bg-[#18181b] border-zinc-800 text-zinc-300 p-1.5 shadow-xl" 
+                    side="top" 
+                    align="start" 
+                    sideOffset={8}
                   >
-                    <Cpu className="w-3.5 h-3.5" />
-                    <span className="max-w-[120px] truncate">{getModelLabel()}</span>
-                    <ChevronUp className="w-3 h-3 opacity-50 transition-transform duration-200" />
-                  </button>
-                </DropdownMenuTrigger>
+                    {AVAILABLE_MODELS.map((m) => {
+                      const isSelected = selectedModels.includes(m.id);
+                      return (
+                        <DropdownMenuItem
+                          key={m.id}
+                          onSelect={(e) => {
+                            e.preventDefault();
+                            toggleModel(m.id);
+                          }}
+                          className={`flex items-center gap-3 text-sm px-2 py-2.5 rounded-md cursor-pointer focus:bg-zinc-800 focus:text-zinc-100 ${isSelected ? "text-zinc-100" : "text-zinc-400"}`}
+                        >
+                          {/* Custom Checkbox/Radio Visual */}
+                          <div 
+                            className={`
+                              flex items-center justify-center w-4 h-4  border transition-all
+                              ${isSelected 
+                                ? "bg-zinc-100 border-zinc-100 text-black" 
+                                : "border-zinc-600 bg-transparent hover:border-zinc-500"
+                              }
+                            `}
+                          >
+                            {isSelected && <Check className="w-3 h-3 stroke-[3]" />}
+                          </div>
+                          
+                          <span>{m.name}</span>
+                        </DropdownMenuItem>
+                      );
+                    })}
+                  </DropdownMenuContent>
+                </DropdownMenu>
 
-                <DropdownMenuContent 
-                  className="w-64 bg-[#18181b] border-zinc-800 text-zinc-300 p-1.5" 
-                  side="top" 
-                  align="start" 
-                  sideOffset={8}
+                <div className="flex items-center space-x-2 pl-2 border-l border-zinc-800">
+                  <Switch 
+                    id="agent-mode" 
+                    checked={isAgent}
+                    onCheckedChange={setIsAgent}
+                    className="scale-75 data-[state=checked]:bg-emerald-500 data-[state=unchecked]:bg-zinc-700 border border-zinc-600 data-[state=checked]:border-emerald-500 transition-colors"
+                  />
+                  <Label 
+                    htmlFor="agent-mode" 
+                    className={`text-xs font-medium cursor-pointer transition-colors ${isAgent ? "text-emerald-400" : "text-zinc-500 hover:text-zinc-300"}`}
+                  >
+                    Agent
+                  </Label>
+                </div>
+
+              </div>
+
+              <div className="flex gap-2">
+                <button
+                  onClick={() => handleSubmit()}
+                  disabled={!input.trim() || loading}
+                  className={`h-9 w-9 rounded-full flex items-center justify-center transition-all shadow-lg ${
+                    !input.trim() || loading 
+                      ? "bg-zinc-800 text-zinc-600 cursor-not-allowed" 
+                      : "bg-zinc-100 hover:bg-zinc-300 text-zinc-950 cursor-pointer"
+                  }`}
                 >
-                  {AVAILABLE_MODELS.map((m) => {
-                    const isSelected = selectedModels.includes(m.id);
-                    return (
-                      <DropdownMenuItem
-                        key={m.id}
-                        onSelect={(e) => { e.preventDefault(); toggleModel(m.id); }}
-                        className={`flex items-center justify-between text-sm px-2 py-2.5 rounded-md cursor-pointer focus:bg-zinc-800 focus:text-zinc-100 ${isSelected ? "text-zinc-100" : "text-zinc-400"}`}
-                      >
-                        <span>{m.name}</span>
-                        {isSelected && <Check className="w-4 h-4 text-gray-500" />}
-                      </DropdownMenuItem>
-                    );
-                  })}
-                </DropdownMenuContent>
-              </DropdownMenu>
-
-              <button
-                onClick={handleSubmit}
-                disabled={!input.trim() || loading}
-                className={`h-9 w-9 rounded-full flex items-center justify-center transition-all shadow-lg ${!input.trim() || loading ? "bg-zinc-800 text-zinc-600 cursor-not-allowed" : "bg-zinc-100 hover:bg-zinc-300 text-zinc-950 cursor-pointer"}`}
-              >
-                <Send className="w-4 h-4" />
-              </button>
+                  <Send className="w-4 h-4" />
+                </button>
+              </div>
             </div>
           </div>
         </div>
