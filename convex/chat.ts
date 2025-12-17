@@ -2,6 +2,18 @@
 import { query, mutation } from "./_generated/server";
 import { v } from "convex/values";
 
+// Get Chats List
+export const listChats = query({
+  args: {},
+  handler: async (ctx) => {
+    return await ctx.db
+      .query("chat")
+      .order("desc")
+      .collect();
+  },
+});
+
+
 // Fetch full chat by ID
 export const getChat = query({
   args: { chatId: v.id("chat") },
@@ -15,8 +27,9 @@ export const getChat = query({
 export const createChat = mutation({
   args: { title: v.string() },
   handler: async (ctx, args) => {
+    const title = args.title.charAt(0).toUpperCase() + args.title.slice(1);
     const chatId = await ctx.db.insert("chat", {
-      title: args.title,
+      title,
       messages: [],
       createdAt: Date.now(),
       updatedAt: Date.now(),
@@ -48,3 +61,11 @@ export const addMessage = mutation({
     });
   },
 });
+
+export const deleteChat = mutation({
+  args: { chatId: v.id("chat") },
+  handler: async (ctx, args) => {
+    const chat = await ctx.db.delete(args.chatId);
+    return chat;
+  },
+})
