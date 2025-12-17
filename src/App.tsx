@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 import { 
   Send, 
   Copy, 
@@ -17,12 +18,16 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+
+import { SidebarTrigger } from "@/components/ui/sidebar";
+
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 import { useMutation, useQuery } from "convex/react";
 import { api } from "../convex/_generated/api";
 import type { Id } from "../convex/_generated/dataModel";
+import { useOutletContext } from "react-router-dom";
 
 const AVAILABLE_MODELS = [
   { id: "google/gemini-2.5-flash", name: "Gemini 2.5 Flash" },
@@ -39,25 +44,49 @@ interface Message {
   timestamp: number;
 }
 
+type LayoutContext = {
+  activeChatId: Id<"chat"> | null;
+  setActiveChatId: (id: Id<"chat">) => void;
+};
+
 export default function ChatPage() {
+  const navigate = useNavigate();
+  
+  // 1. FIX: Initialize from localStorage to prevent reset on reload/navigation
+  const [selectedModels, setSelectedModels] = useState<string[]>(() => {
+    if (typeof window !== "undefined") {
+      const saved = localStorage.getItem("selectedModel");
+      if (saved) return JSON.parse(saved);
+    }
+    return [AVAILABLE_MODELS[0].id];
+  });
+
+  // 2. FIX: Save to localStorage whenever selection changes
+  useEffect(() => {
+    localStorage.setItem("selectedModel", JSON.stringify(selectedModels));
+  }, [selectedModels]);
+
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
-  const [selectedModels, setSelectedModels] = useState<string[]>([
-    AVAILABLE_MODELS[0].id
-  ]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [chatId, setChatId] = useState<Id<"chat"> | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const createChat = useMutation(api.chat.createChat);
   const addMessage = useMutation(api.chat.addMessage);
-  const chat = useQuery(api.chat.getChat, chatId ? { chatId } : "skip");
+  const { activeChatId: chatId, setActiveChatId } =
+    useOutletContext<LayoutContext>();
 
-  // Load messages when chat changes, BUT NOT while streaming (loading)
+  const chat = useQuery(
+    api.chat.getChat,
+    chatId ? { chatId } : "skip"
+  );
+
   useEffect(() => {
+    // Only update messages from DB if we aren't currently loading/streaming 
+    // to prevent the DB state from overwriting optimistic UI updates
     if (chat?.messages && !loading) {
       setMessages(chat.messages);
     }
@@ -107,27 +136,31 @@ export default function ChatPage() {
     setError(null);
     let activeChatId = chatId;
 
-    // Create chat if it doesn't exist
+    // Create new chat if none exists
     if (!activeChatId) {
       activeChatId = await createChat({ title: input.slice(0, 50) });
-      setChatId(activeChatId);
+      setActiveChatId(activeChatId);
+      
+      // 3. FIX: Use history.pushState instead of navigate()
+      // navigate() forces a Router re-check which can unmount the component, killing the stream.
+      // pushState updates the URL silently so the user sees the new ID, but the component stays alive.
+      window.history.pushState({}, "", `/chat/${activeChatId}`);
     }
 
     const userInput = input.trim();
     setInput("");
-    setLoading(true); // This now blocks the useEffect from overwriting us
+    setLoading(true);
 
-    // Calculate index: Current length + 1 (User msg) = Assistant starts at length + 1
     const assistantIndex = messages.length + 1;
 
-    // Optimistically add User + Placeholder Assistant
+    // Optimistic UI update
     setMessages((prev) => [
       ...prev,
       { role: "user", content: userInput, timestamp: Date.now() },
       { role: "assistant", content: "", timestamp: Date.now() }
     ]);
 
-    // Save User message to DB
+    // Save user message to DB
     await addMessage({
       chatId: activeChatId,
       role: "user",
@@ -178,14 +211,13 @@ export default function ChatPage() {
               if (delta) {
                 finalAssistantContent += delta;
                 
-                // Update local state directly
                 setMessages((prev) => {
                   const updated = [...prev];
-                  // Safety check to ensure we are updating the correct index
+                  // Ensure we are updating the specific assistant message we added earlier
                   if (updated[assistantIndex]) {
                     updated[assistantIndex] = {
                       ...updated[assistantIndex],
-                      content: finalAssistantContent, // Use the accumulated content
+                      content: finalAssistantContent,
                     };
                   }
                   return updated;
@@ -198,7 +230,6 @@ export default function ChatPage() {
         }
       }
 
-      // Save complete assistant message to DB
       await addMessage({
         chatId: activeChatId,
         role: "assistant",
@@ -208,10 +239,9 @@ export default function ChatPage() {
     } catch (err: any) {
       console.error(err);
       setError(err.message || "Something went wrong");
-      // Remove the placeholder if it failed
       setMessages((prev) => prev.filter((_, i) => i !== assistantIndex));
     } finally {
-      setLoading(false); // Re-enables the useEffect sync
+      setLoading(false);
     }
   };
 
@@ -223,7 +253,12 @@ export default function ChatPage() {
   };
 
   return (
-    <div className="flex flex-col h-screen bg-[#09090b] text-zinc-100 font-sans selection:bg-zinc-800">
+    <div className="flex flex-col h-screen bg-[#09090b] text-zinc-100 font-sans selection:bg-zinc-800 relative">
+      
+      <div className="absolute top-3 left-3 z-50">
+        <SidebarTrigger className="text-zinc-500 hover:text-zinc-200 cursor-pointer hover:bg-zinc-800" />
+      </div>
+
       <main className="flex-1 overflow-y-auto custom-scrollbar">
         <div className="max-w-[800px] mx-auto px-4 py-12 space-y-8">
           {messages.length === 0 && (
@@ -241,33 +276,33 @@ export default function ChatPage() {
           )}
 
           {messages.map((m, idx) => (
-  <div
-    key={idx}
-    className={`flex gap-4 ${m.role === "user" ? "justify-end" : "justify-start"}`}
-  >
-    <div
-      className={`relative text-[15px] leading-relaxed group ${
-        m.role === "user"
-          ? "px-5 py-3.5 rounded-2xl bg-[#18181b] text-white font-medium shadow-sm max-w-[85%]" // USER: Bubble style
-          : "text-zinc-100 w-full px-0 py-2" // ASSISTANT: Full width, no bg, no padding-x
-      }`}
-    >
-      <div className="whitespace-pre-wrap font-normal">
-        <Markdown remarkPlugins={[remarkGfm]}>{m.content}</Markdown>
-      </div>
+            <div
+              key={idx}
+              className={`flex gap-4 ${m.role === "user" ? "justify-end" : "justify-start"}`}
+            >
+              <div
+                className={`relative text-[15px] leading-relaxed group ${
+                  m.role === "user"
+                    ? "px-5 py-3.5 rounded-2xl bg-[#18181b] text-white font-medium shadow-sm max-w-[85%]" 
+                    : "text-zinc-100 w-full px-0 py-2" 
+                }`}
+              >
+                <div className="whitespace-pre-wrap font-normal">
+                  <Markdown remarkPlugins={[remarkGfm]}>{m.content}</Markdown>
+                </div>
 
-      {m.role === "assistant" && m.content && (
-        <button
-          onClick={() => copyToClipboard(m.content)}
-          className="absolute -bottom-6 left-0 opacity-0 group-hover:opacity-100 transition-opacity p-1.5 hover:bg-zinc-800/50 rounded-md cursor-pointer text-zinc-500 hover:text-zinc-300"
-          title="Copy response"
-        >
-          <Copy className="w-3.5 h-3.5" />
-        </button>
-      )}
-    </div>
-  </div>
-))}
+                {m.role === "assistant" && m.content && (
+                  <button
+                    onClick={() => copyToClipboard(m.content)}
+                    className="absolute -bottom-6 left-0 opacity-0 group-hover:opacity-100 transition-opacity p-1.5 hover:bg-zinc-800/50 rounded-md cursor-pointer text-zinc-500 hover:text-zinc-300"
+                    title="Copy response"
+                  >
+                    <Copy className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
+            </div>
+          ))}
 
           {loading && (
             <div className="flex gap-4">
