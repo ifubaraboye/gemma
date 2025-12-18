@@ -9,7 +9,8 @@ import {
   ChevronUp, 
   Cpu,
   Check,
-  AlertCircle
+  AlertCircle,
+  Bot
 } from "lucide-react";
 
 import {
@@ -37,18 +38,130 @@ const AVAILABLE_MODELS = [
   { id: "mistralai/devstral-2512:free", name:"Mistral: Devstral"},
   { id: "openai/gpt-oss-120b:free", name:"GPT-OSS 120B"},
   { id: "moonshotai/kimi-k2:free", name:"Kimi K2"},
-  { id: "qwen/qwen3-4b:free", name:"Qwen 3 4B"}
+  { id: "qwen/qwen3-4b:free", name:"Qwen 3 4B"},
+  { id: "google/gemini-3-pro-preview", name:"Gemini 3 Pro"},
+  { id: "google/gemini-3-flash-preview", name:"Gemini 3 Flash"},
+  { id: "cognitivecomputations/dolphin-mistral-24b-venice-edition:free", name:"Venice: Uncensored"},
 ];
 
 interface Message {
   role: "user" | "assistant";
   content: string;
   timestamp: number;
+  completedModels?: string[];
 }
 
 type LayoutContext = {
   activeChatId: Id<"chat"> | null;
   setActiveChatId: (id: Id<"chat">) => void;
+};
+
+// --- Sub-Component for Model Cards ---
+const MultiModelDisplay = ({ 
+  content, 
+  isStreaming,
+  completedModels = []
+}: { 
+  content: string; 
+  isStreaming: boolean;
+  completedModels?: string[];
+}) => {
+  const [activeModelId, setActiveModelId] = useState<string | null>(null);
+  
+  let modelResponses: Record<string, string> = {};
+  let isMultiModel = false;
+  
+  try {
+    const parsed = JSON.parse(content);
+    if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
+      modelResponses = parsed;
+      isMultiModel = true;
+    }
+  } catch (e) {
+    isMultiModel = false;
+  }
+
+  if (!isMultiModel) {
+    return (
+      <div className="whitespace-pre-wrap font-normal">
+        <Markdown remarkPlugins={[remarkGfm]}>{content}</Markdown>
+      </div>
+    );
+  }
+
+  const models = Object.keys(modelResponses);
+
+  return (
+    <div className="space-y-4 w-full">
+      <div className="flex flex-wrap gap-2">
+        {models.map((modelId) => {
+          const modelName = AVAILABLE_MODELS.find(m => m.id === modelId)?.name || modelId;
+          const isActive = activeModelId === modelId;
+          const hasContent = modelResponses[modelId]?.length > 0;
+          const isCompleted = completedModels.includes(modelId) || (!isStreaming && hasContent);
+
+          return (
+            <button
+              key={modelId}
+              onClick={() => setActiveModelId(isActive ? null : modelId)}
+              className={`
+                flex flex-col items-start p-3 rounded-md border text-left transition-all min-w-[200px] cursor-pointer
+                ${isActive 
+                  ? "bg-zinc-800 border-zinc-600 ring-1 ring-zinc-500" 
+                  : "bg-zinc-900/50 border-zinc-800 hover:bg-zinc-800 hover:border-zinc-700"
+                }
+              `}
+            >
+              <div className="flex items-center justify-between w-full mb-1">
+                <span className="text-xs font-bold text-zinc-100">{modelName}</span>
+                {isActive && <div className="w-1.5 h-1.5 rounded-full " />}
+              </div>
+              
+              <span className="text-[10px] font-medium mt-1">
+                {isCompleted ? (
+                  <span className="text-emerald-400 flex items-center gap-1.5 animate-in fade-in duration-300">
+                     Task completed
+                  </span>
+                ) : hasContent ? (
+                  <span className="text-zinc-400 flex items-center gap-1.5">
+                    <span className="relative flex h-2 w-2">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                      <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                    </span>
+                    Streaming...
+                  </span>
+                ) : (
+                  <span className="text-zinc-500">Thinking...</span>
+                )}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+
+      {activeModelId && (
+        <div className="mt-4 pt-4 border-t border-zinc-800 animate-in fade-in slide-in-from-top-2 duration-300">
+          <div className="flex items-center gap-2 mb-2 text-zinc-400 text-xs uppercase tracking-wider font-semibold">
+            <Bot className="w-3 h-3" />
+            Output from {AVAILABLE_MODELS.find(m => m.id === activeModelId)?.name}
+          </div>
+          <div className="whitespace-pre-wrap font-normal min-h-[60px]">
+             {modelResponses[activeModelId] ? (
+               <Markdown remarkPlugins={[remarkGfm]}>{modelResponses[activeModelId]}</Markdown>
+             ) : (
+               <span className="text-zinc-600 italic">Waiting for response...</span>
+             )}
+          </div>
+        </div>
+      )}
+      
+      {!activeModelId && (
+        <div className="text-zinc-600 text-sm italic mt-2 pl-1">
+          Select a model card above to view its response.
+        </div>
+      )}
+    </div>
+  );
 };
 
 export default function ChatPage() {
@@ -64,7 +177,6 @@ export default function ChatPage() {
 
   const [isAgent, setIsAgent] = useState(false);
 
-  // Effect: Enforce single selection when Agent mode is turned off
   useEffect(() => {
     if (!isAgent && selectedModels.length > 1) {
       setSelectedModels([selectedModels[0]]);
@@ -93,11 +205,54 @@ export default function ChatPage() {
     chatId ? { chatId } : "skip"
   );
 
+  // --- 1. Reset state when entering "New Chat" ---
   useEffect(() => {
-    if (chat?.messages && !loading) {
-      setMessages(chat.messages);
+    if (chatId === null) {
+      setMessages([]);
+      setInput("");
+      setError(null);
+      // We do NOT reset isAgent/selectedModels here to preserve user preference
+      // for the new session, or let them toggle it freely.
+    }
+  }, [chatId]);
+
+  // --- 2. Sync State with Loaded Chat History ---
+  useEffect(() => {
+    if (chat?.messages) {
+      // Don't interrupt loading state for optimistic updates
+      if (!loading) {
+        setMessages(chat.messages);
+      }
+
+      // Logic: If chat has history, infer 'isAgent' mode and 'selectedModels'
+      if (chat.messages.length > 0) {
+        const lastAssistantMessage = [...chat.messages].reverse().find(m => m.role === "assistant");
+        
+        if (lastAssistantMessage) {
+          try {
+            const parsed = JSON.parse(lastAssistantMessage.content);
+            // Check if it's the Agent Mode JSON structure (Object with model keys)
+            const isAgentChat = typeof parsed === "object" && parsed !== null && !Array.isArray(parsed);
+            
+            setIsAgent(isAgentChat);
+            
+            if (isAgentChat) {
+              const usedModels = Object.keys(parsed);
+              if (usedModels.length > 0) {
+                setSelectedModels(usedModels);
+              }
+            }
+          } catch (e) {
+            // Content is plain text -> Standard Chat
+            setIsAgent(false);
+          }
+        }
+      }
     }
   }, [chat, loading]);
+
+  // Calculate if chat is started to lock the switch
+  const isChatStarted = messages.length > 0;
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -115,14 +270,11 @@ export default function ChatPage() {
 
   const toggleModel = (id: string) => {
     setSelectedModels((prev) => {
-      // If NOT in agent mode, behave like a radio button (replace selection)
       if (!isAgent) {
         return [id];
       }
-
-      // If in agent mode, behave like a checkbox (toggle)
       if (prev.includes(id)) {
-        if (prev.length === 1) return prev; // Keep at least one
+        if (prev.length === 1) return prev;
         return prev.filter((m) => m !== id);
       }
       return [...prev, id];
@@ -146,40 +298,56 @@ export default function ChatPage() {
     if (e) e.preventDefault();
     if (!input.trim() || loading) return;
 
-    setError(null);
-    let activeChatId = chatId;
-
-    if (!activeChatId) {
-      activeChatId = await createChat({ title: input.slice(0, 50) });
-      setActiveChatId(activeChatId);
-      window.history.pushState({}, "", `/chat/${activeChatId}`);
-    }
-
     const userInput = input.trim();
     setInput("");
+    setError(null);
     setLoading(true);
 
+    // Optimistic UI Update
+    const initialContent = isAgent 
+      ? JSON.stringify(selectedModels.reduce((acc, modelId) => ({ ...acc, [modelId]: "" }), {}))
+      : "";
+
+    const newUserMessage: Message = { 
+      role: "user", 
+      content: userInput, 
+      timestamp: Date.now() 
+    };
+    
+    const newAssistantMessage: Message = { 
+      role: "assistant", 
+      content: initialContent, 
+      timestamp: Date.now(), 
+      completedModels: [] 
+    };
+
+    setMessages((prev) => [...prev, newUserMessage, newAssistantMessage]);
+    
     const assistantIndex = messages.length + 1;
-
-    setMessages((prev) => [
-      ...prev,
-      { role: "user", content: userInput, timestamp: Date.now() },
-      { role: "assistant", content: "", timestamp: Date.now() }
-    ]);
-
-    await addMessage({
-      chatId: activeChatId,
-      role: "user",
-      content: userInput,
-    });
+    let activeChatId = chatId;
 
     try {
+      if (!activeChatId) {
+        activeChatId = await createChat({ 
+          title: userInput.slice(0, 50),
+          modelCount: selectedModels.length 
+        });
+        setActiveChatId(activeChatId);
+        navigate(`/chat/${activeChatId}`);
+      }
+
+      addMessage({
+        chatId: activeChatId,
+        role: "user",
+        content: userInput,
+      }).catch(err => console.error("Failed to save user message:", err));
+
       const res = await fetch("http://localhost:3001/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          model: selectedModels[0], // Backend might handle array if isAgent is true
-          models: selectedModels,   // Sending array for Agent mode support
+          model: selectedModels[0], 
+          models: selectedModels,
           isAgentMode: isAgent,
           messages: [
             ...messages.map((m) => ({ role: m.role, content: m.content })),
@@ -198,7 +366,10 @@ export default function ChatPage() {
       if (!reader) throw new Error("No response body");
 
       let buffer = "";
-      let finalAssistantContent = "";
+      let accumulatedResponses: Record<string, string> = {};
+      selectedModels.forEach(m => accumulatedResponses[m] = "");
+      let plainStringAccumulator = "";
+      let completedModels: string[] = [];
 
       while (true) {
         const { done, value } = await reader.read();
@@ -210,25 +381,64 @@ export default function ChatPage() {
 
         for (const line of lines) {
           const trimmed = line.trim();
-          if (!trimmed || trimmed === "data: [DONE]") continue;
+          if (!trimmed) continue;
 
           if (trimmed.startsWith("data: ")) {
             try {
-              const parsed = JSON.parse(trimmed.slice(6));
-              const delta = parsed.choices?.[0]?.delta?.content;
-              if (delta) {
-                finalAssistantContent += delta;
-                
-                setMessages((prev) => {
-                  const updated = [...prev];
-                  if (updated[assistantIndex]) {
-                    updated[assistantIndex] = {
-                      ...updated[assistantIndex],
-                      content: finalAssistantContent,
-                    };
+              const payloadStr = trimmed.slice(6);
+              if (payloadStr === "[DONE]") continue;
+
+              const payload = JSON.parse(payloadStr);
+
+              if (payload.modelId) {
+                const { modelId, content = "", done: modelDone } = payload;
+
+                if (modelDone && !completedModels.includes(modelId)) {
+                  completedModels.push(modelId);
+                }
+
+                if (content) {
+                  if (isAgent) {
+                    accumulatedResponses[modelId] = (accumulatedResponses[modelId] || "") + content;
+                    setMessages((prev) => {
+                      const updated = [...prev];
+                      if (updated[assistantIndex]) {
+                        updated[assistantIndex] = {
+                          ...updated[assistantIndex],
+                          content: JSON.stringify(accumulatedResponses),
+                          completedModels: [...completedModels]
+                        };
+                      }
+                      return updated;
+                    });
+                  } else {
+                    plainStringAccumulator += content;
+                    setMessages((prev) => {
+                      const updated = [...prev];
+                      if (updated[assistantIndex]) {
+                        updated[assistantIndex] = {
+                          ...updated[assistantIndex],
+                          content: plainStringAccumulator,
+                          completedModels: [...completedModels]
+                        };
+                      }
+                      return updated;
+                    });
                   }
-                  return updated;
-                });
+                }
+
+                 if (modelDone) {
+                    setMessages((prev) => {
+                       const updated = [...prev];
+                       if (updated[assistantIndex]) {
+                         updated[assistantIndex] = {
+                           ...updated[assistantIndex],
+                           completedModels: [...completedModels]
+                         };
+                       }
+                       return updated;
+                     });
+                 }
               }
             } catch (parseError) {
               console.error("Failed to parse SSE chunk:", parseError);
@@ -240,7 +450,8 @@ export default function ChatPage() {
       await addMessage({
         chatId: activeChatId,
         role: "assistant",
-        content: finalAssistantContent,
+        content: isAgent ? JSON.stringify(accumulatedResponses) : plainStringAccumulator,
+        completedModels: isAgent ? completedModels : undefined,
       });
 
     } catch (err: any) {
@@ -294,11 +505,13 @@ export default function ChatPage() {
                     : "text-zinc-100 w-full px-0 py-2" 
                 }`}
               >
-                <div className="whitespace-pre-wrap font-normal">
-                  <Markdown remarkPlugins={[remarkGfm]}>{m.content}</Markdown>
-                </div>
+                <MultiModelDisplay 
+                  content={m.content} 
+                  isStreaming={loading && idx === messages.length - 1}
+                  completedModels={m.completedModels || []}
+                />
 
-                {m.role === "assistant" && m.content && (
+                {m.role === "assistant" && !m.content.startsWith("{") && m.content && (
                   <button
                     onClick={() => copyToClipboard(m.content)}
                     className="absolute -bottom-6 left-0 opacity-0 group-hover:opacity-100 transition-opacity p-1.5 hover:bg-zinc-800/50 rounded-md cursor-pointer text-zinc-500 hover:text-zinc-300"
@@ -377,10 +590,9 @@ export default function ChatPage() {
                           }}
                           className={`flex items-center gap-3 text-sm px-2 py-2.5 rounded-md cursor-pointer focus:bg-zinc-800 focus:text-zinc-100 ${isSelected ? "text-zinc-100" : "text-zinc-400"}`}
                         >
-                          {/* Custom Checkbox/Radio Visual */}
                           <div 
                             className={`
-                              flex items-center justify-center w-4 h-4  border transition-all
+                              flex items-center justify-center w-4 h-4 border transition-all
                               ${isSelected 
                                 ? "bg-zinc-100 border-zinc-100 text-black" 
                                 : "border-zinc-600 bg-transparent hover:border-zinc-500"
@@ -397,17 +609,26 @@ export default function ChatPage() {
                   </DropdownMenuContent>
                 </DropdownMenu>
 
-                <div className="flex items-center space-x-2 pl-2 border-l border-zinc-800">
+                <div 
+                  className={`flex items-center space-x-2 pl-2 border-l border-zinc-800 transition-opacity duration-300 ${isChatStarted ? "opacity-60" : "opacity-100"}`}
+                  title={isChatStarted ? `Agent mode is ${isAgent ? 'active' : 'inactive'} and locked for this chat` : "Toggle Agent Mode"}
+                >
                   <Switch 
                     id="agent-mode" 
                     checked={isAgent}
                     onCheckedChange={setIsAgent}
-                    // Updated colors for better visibility (Emerald when active, Zinc-700 when inactive)
-                    className="scale-75 data-[state=checked]:bg-emerald-500 data-[state=unchecked]:bg-zinc-700 border border-zinc-600 data-[state=checked]:border-emerald-500 transition-colors"
+                    disabled={isChatStarted}
+                    className="scale-75 cursor-pointer data-[state=checked]:bg-emerald-500 data-[state=unchecked]:bg-zinc-700 border border-zinc-600 data-[state=checked]:border-emerald-500 transition-colors disabled:cursor-not-allowed"
                   />
                   <Label 
                     htmlFor="agent-mode" 
-                    className={`text-xs font-medium cursor-pointer transition-colors ${isAgent ? "text-emerald-400" : "text-zinc-500 hover:text-zinc-300"}`}
+                    className={`text-xs font-medium transition-colors ${
+                      isChatStarted 
+                        ? "text-zinc-500 cursor-not-allowed" 
+                        : isAgent 
+                          ? "text-emerald-400 cursor-pointer" 
+                          : "text-zinc-500 hover:text-zinc-300 cursor-pointer"
+                    }`}
                   >
                     Agent
                   </Label>
