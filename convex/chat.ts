@@ -1,4 +1,3 @@
-// queries/mutations in convex/chat.ts
 import { query, mutation } from "./_generated/server";
 import { v } from "convex/values";
 
@@ -13,7 +12,6 @@ export const listChats = query({
   },
 });
 
-
 // Fetch full chat by ID
 export const getChat = query({
   args: { chatId: v.id("chat") },
@@ -25,11 +23,15 @@ export const getChat = query({
 
 // Create a new chat
 export const createChat = mutation({
-  args: { title: v.string() },
+  args: { 
+    title: v.string(),
+    modelCount: v.optional(v.number()) 
+  },
   handler: async (ctx, args) => {
     const title = args.title.charAt(0).toUpperCase() + args.title.slice(1);
     const chatId = await ctx.db.insert("chat", {
       title,
+      modelCount: args.modelCount || 1, 
       messages: [],
       createdAt: Date.now(),
       updatedAt: Date.now(),
@@ -44,6 +46,7 @@ export const addMessage = mutation({
     chatId: v.id("chat"),
     role: v.union(v.literal("user"), v.literal("assistant")),
     content: v.string(),
+    completedModels: v.optional(v.array(v.string())),
   },
   handler: async (ctx, args) => {
     const chat = await ctx.db.get(args.chatId);
@@ -53,6 +56,7 @@ export const addMessage = mutation({
       role: args.role,
       content: args.content,
       timestamp: Date.now(),
+      ...(args.completedModels && { completedModels: args.completedModels }),
     };
 
     await ctx.db.patch(args.chatId, {
@@ -68,4 +72,4 @@ export const deleteChat = mutation({
     const chat = await ctx.db.delete(args.chatId);
     return chat;
   },
-})
+});
