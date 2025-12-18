@@ -40,26 +40,37 @@ export function AppSidebar({ activeChatId, onSelectChat }: AppSidebarProps) {
   };
 
   const handleNewChat = () => {
-    // Reset active chat and navigate to home
-    // The chat will be created when user sends first message
     onSelectChat(null);
     navigate("/");
   };
 
   return (
-    <Sidebar collapsible="icon" className="border-r border-sidebar-border bg-sidebar">
+    <Sidebar collapsible="icon" variant="sidebar" className="border-r border-sidebar-border bg-sidebar">
       {/* HEADER: New Chat */}
       <SidebarHeader className="text-center">
         <SidebarMenu>
           <SidebarMenuItem>
-            <SidebarMenuButton
-              size="lg"
-              onClick={handleNewChat}
-              className="flex justify-center gap-2 bg-sidebar-primary text-sidebar-primary-foreground hover:bg-sidebar-primary/90"
-            >
-              New Chat
-            </SidebarMenuButton>
-          </SidebarMenuItem>
+  <SidebarMenuButton
+    size="lg"
+    onClick={handleNewChat}
+    className="
+      flex justify-center gap-2 cursor-pointer transition-colors duration-150
+
+      bg-sidebar-primary text-sidebar-primary-foreground
+      hover:bg-[#09090B] hover:text-white
+
+      active:bg-[#09090B] active:text-white
+      focus:bg-[#09090B] focus:text-white
+      focus-visible:bg-[#09090B] focus-visible:text-white
+
+      data-[state=open]:bg-[#09090B] data-[state=open]:text-white
+      aria-[current=page]:bg-[#09090B] aria-[current=page]:text-white
+    "
+  >
+    New Chat
+  </SidebarMenuButton>
+</SidebarMenuItem>
+
         </SidebarMenu>
       </SidebarHeader>
 
@@ -77,15 +88,25 @@ export function AppSidebar({ activeChatId, onSelectChat }: AppSidebarProps) {
                       navigate(`/chat/${chat._id}`);
                     }}
                     isActive={activeChatId === chat._id}
-                    className="transition-colors cursor-pointer duration-200 data-[active=true]:bg-sidebar-accent data-[active=true]:text-sidebar-accent-foreground"
+                    // Added h-auto and py-2 to allow button to grow for the subtitle
+                    className="h-auto py-3 transition-colors cursor-pointer duration-200 data-[active=true]:bg-sidebar-accent data-[active=true]:text-sidebar-accent-foreground"
                   >
-                    <span className="truncate font-medium">{chat.title}</span>
+                    <div className="grid flex-1 text-left text-sm leading-tight">
+                      <span className="truncate font-medium">{chat.title}</span>
+                      
+                      {/* Subtitle: Only show if more than 1 agent was used */}
+                      {chat.modelCount && chat.modelCount > 1 && (
+                        <span className="truncate text-xs text-sidebar-foreground/60 font-normal">
+                          {chat.modelCount} Agents
+                        </span>
+                      )}
+                    </div>
                   </SidebarMenuButton>
 
                   <SidebarMenuAction
                     onClick={(e) => handleDelete(e, chat._id)}
                     showOnHover
-                    className="text-sidebar-foreground/50 hover:text-destructive hover:bg-sidebar-accent transition-colors"
+                    className="text-sidebar-foreground/50  cursor-pointer hover:text-destructive hover:bg-sidebar-accent transition-colors"
                   >
                     <Trash2 className="size-4" />
                   </SidebarMenuAction>
