@@ -6,7 +6,7 @@ import Layout from './Layout.tsx' // Import the new Layout
 import { createBrowserRouter, RouterProvider } from 'react-router-dom';
 import { ConvexProvider, ConvexReactClient } from 'convex/react';
 // import { SidebarTrigger } from './components/ui/sidebar.tsx'
-import Chat from "./pages/chat/chat.tsx"
+import Chat from "./pages/chat/Chat.tsx"
 
 const convex = new ConvexReactClient(import.meta.env.VITE_CONVEX_URL as string);
 
