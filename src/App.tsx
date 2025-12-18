@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router-dom";
 import { 
   Send, 
   Copy, 
@@ -45,6 +45,7 @@ const AVAILABLE_MODELS = [
 ];
 
 interface Message {
+  id?: string; // Added ID for reliable tracking
   role: "user" | "assistant";
   content: string;
   timestamp: number;
@@ -166,6 +167,7 @@ const MultiModelDisplay = ({
 
 export default function ChatPage() {
   const navigate = useNavigate();
+  const location = useLocation();
   
   const [selectedModels, setSelectedModels] = useState<string[]>(() => {
     if (typeof window !== "undefined") {
@@ -192,6 +194,9 @@ export default function ChatPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // --- SAFETY LOCK: Prevents double prompts/fetches ---
+  const processedChatId = useRef<string | null>(null);
+  
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -205,33 +210,26 @@ export default function ChatPage() {
     chatId ? { chatId } : "skip"
   );
 
-  // --- 1. Reset state when entering "New Chat" ---
   useEffect(() => {
     if (chatId === null) {
       setMessages([]);
       setInput("");
       setError(null);
-      // We do NOT reset isAgent/selectedModels here to preserve user preference
-      // for the new session, or let them toggle it freely.
+      processedChatId.current = null;
     }
   }, [chatId]);
 
-  // --- 2. Sync State with Loaded Chat History ---
   useEffect(() => {
     if (chat?.messages) {
-      // Don't interrupt loading state for optimistic updates
       if (!loading) {
         setMessages(chat.messages);
       }
-
-      // Logic: If chat has history, infer 'isAgent' mode and 'selectedModels'
       if (chat.messages.length > 0) {
         const lastAssistantMessage = [...chat.messages].reverse().find(m => m.role === "assistant");
         
         if (lastAssistantMessage) {
           try {
             const parsed = JSON.parse(lastAssistantMessage.content);
-            // Check if it's the Agent Mode JSON structure (Object with model keys)
             const isAgentChat = typeof parsed === "object" && parsed !== null && !Array.isArray(parsed);
             
             setIsAgent(isAgentChat);
@@ -243,7 +241,6 @@ export default function ChatPage() {
               }
             }
           } catch (e) {
-            // Content is plain text -> Standard Chat
             setIsAgent(false);
           }
         }
@@ -251,7 +248,6 @@ export default function ChatPage() {
     }
   }, [chat, loading]);
 
-  // Calculate if chat is started to lock the switch
   const isChatStarted = messages.length > 0;
 
   useEffect(() => {
@@ -294,27 +290,32 @@ export default function ChatPage() {
     navigator.clipboard.writeText(text);
   };
 
-  const handleSubmit = async (e?: React.FormEvent) => {
-    if (e) e.preventDefault();
-    if (!input.trim() || loading) return;
-
-    const userInput = input.trim();
-    setInput("");
+  // 3. Extracted Core Streaming Logic with ID Fixes
+  const processUserMessage = async (
+    userContent: string, 
+    currentModels: string[], 
+    agentMode: boolean, 
+    activeChatId: Id<"chat">,
+    initialMessages: Message[] = [] 
+  ) => {
     setError(null);
     setLoading(true);
 
-    // Optimistic UI Update
-    const initialContent = isAgent 
-      ? JSON.stringify(selectedModels.reduce((acc, modelId) => ({ ...acc, [modelId]: "" }), {}))
+    const initialContent = agentMode 
+      ? JSON.stringify(currentModels.reduce((acc, modelId) => ({ ...acc, [modelId]: "" }), {}))
       : "";
+
+    // Generate specific ID for tracking
+    const assistantMsgId = Math.random().toString(36).substring(7);
 
     const newUserMessage: Message = { 
       role: "user", 
-      content: userInput, 
+      content: userContent, 
       timestamp: Date.now() 
     };
     
     const newAssistantMessage: Message = { 
+      id: assistantMsgId, // Track ID
       role: "assistant", 
       content: initialContent, 
       timestamp: Date.now(), 
@@ -323,35 +324,23 @@ export default function ChatPage() {
 
     setMessages((prev) => [...prev, newUserMessage, newAssistantMessage]);
     
-    const assistantIndex = messages.length + 1;
-    let activeChatId = chatId;
-
     try {
-      if (!activeChatId) {
-        activeChatId = await createChat({ 
-          title: userInput.slice(0, 50),
-          modelCount: selectedModels.length 
-        });
-        setActiveChatId(activeChatId);
-        navigate(`/chat/${activeChatId}`);
-      }
-
       addMessage({
         chatId: activeChatId,
         role: "user",
-        content: userInput,
+        content: userContent,
       }).catch(err => console.error("Failed to save user message:", err));
 
       const res = await fetch("http://localhost:3001/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          model: selectedModels[0], 
-          models: selectedModels,
-          isAgentMode: isAgent,
+          model: currentModels[0], 
+          models: currentModels,
+          isAgentMode: agentMode,
           messages: [
-            ...messages.map((m) => ({ role: m.role, content: m.content })),
-            { role: "user", content: userInput }
+            ...initialMessages.map((m) => ({ role: m.role, content: m.content })),
+            { role: "user", content: userContent }
           ],
         }),
       });
@@ -367,7 +356,7 @@ export default function ChatPage() {
 
       let buffer = "";
       let accumulatedResponses: Record<string, string> = {};
-      selectedModels.forEach(m => accumulatedResponses[m] = "");
+      currentModels.forEach(m => accumulatedResponses[m] = "");
       let plainStringAccumulator = "";
       let completedModels: string[] = [];
 
@@ -398,13 +387,15 @@ export default function ChatPage() {
                 }
 
                 if (content) {
-                  if (isAgent) {
+                  if (agentMode) {
                     accumulatedResponses[modelId] = (accumulatedResponses[modelId] || "") + content;
                     setMessages((prev) => {
                       const updated = [...prev];
-                      if (updated[assistantIndex]) {
-                        updated[assistantIndex] = {
-                          ...updated[assistantIndex],
+                      // Find via ID
+                      const msgIndex = updated.findIndex(m => m.id === assistantMsgId);
+                      if (msgIndex !== -1) {
+                        updated[msgIndex] = {
+                          ...updated[msgIndex],
                           content: JSON.stringify(accumulatedResponses),
                           completedModels: [...completedModels]
                         };
@@ -415,9 +406,11 @@ export default function ChatPage() {
                     plainStringAccumulator += content;
                     setMessages((prev) => {
                       const updated = [...prev];
-                      if (updated[assistantIndex]) {
-                        updated[assistantIndex] = {
-                          ...updated[assistantIndex],
+                      // Find via ID
+                      const msgIndex = updated.findIndex(m => m.id === assistantMsgId);
+                      if (msgIndex !== -1) {
+                        updated[msgIndex] = {
+                          ...updated[msgIndex],
                           content: plainStringAccumulator,
                           completedModels: [...completedModels]
                         };
@@ -430,9 +423,10 @@ export default function ChatPage() {
                  if (modelDone) {
                     setMessages((prev) => {
                        const updated = [...prev];
-                       if (updated[assistantIndex]) {
-                         updated[assistantIndex] = {
-                           ...updated[assistantIndex],
+                       const msgIndex = updated.findIndex(m => m.id === assistantMsgId);
+                       if (msgIndex !== -1) {
+                         updated[msgIndex] = {
+                           ...updated[msgIndex],
                            completedModels: [...completedModels]
                          };
                        }
@@ -450,18 +444,77 @@ export default function ChatPage() {
       await addMessage({
         chatId: activeChatId,
         role: "assistant",
-        content: isAgent ? JSON.stringify(accumulatedResponses) : plainStringAccumulator,
-        completedModels: isAgent ? completedModels : undefined,
+        content: agentMode ? JSON.stringify(accumulatedResponses) : plainStringAccumulator,
+        completedModels: agentMode ? completedModels : undefined,
       });
 
     } catch (err: any) {
       console.error(err);
       setError(err.message || "Something went wrong");
-      setMessages((prev) => prev.filter((_, i) => i !== assistantIndex));
+      // Clean up the optimistic message if failed
+      setMessages((prev) => prev.filter(m => m.id !== assistantMsgId));
     } finally {
       setLoading(false);
     }
   };
+
+  // 4. Handle Submit: Route first if New Chat
+  const handleSubmit = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!input.trim() || loading) return;
+
+    const userInput = input.trim();
+    setInput("");
+    
+    // CASE A: NEW CHAT -> Create ID, Navigate, Pass State. 
+    if (!chatId) {
+      setLoading(true); 
+      try {
+        const newChatId = await createChat({ 
+          title: userInput.slice(0, 50),
+          modelCount: selectedModels.length 
+        });
+        setActiveChatId(newChatId);
+        
+        navigate(`/chat/${newChatId}`, { 
+          state: { 
+            initialInput: userInput,
+            initialModels: selectedModels,
+            initialIsAgent: isAgent
+          } 
+        });
+      } catch (err: any) {
+        setError("Failed to create chat");
+        setLoading(false);
+      }
+      return;
+    }
+
+    // CASE B: EXISTING CHAT -> Process immediately
+    await processUserMessage(userInput, selectedModels, isAgent, chatId, messages);
+  };
+
+  // 5. Detect incoming state from "New Chat" redirection
+  useEffect(() => {
+    if (
+      chatId && 
+      location.state?.initialInput && 
+      processedChatId.current !== chatId // Check lock
+    ) {
+      // Set lock
+      processedChatId.current = chatId;
+
+      const { initialInput, initialModels, initialIsAgent } = location.state;
+      
+      // Clear navigation state
+      window.history.replaceState({}, document.title);
+
+      if (initialModels) setSelectedModels(initialModels);
+      if (initialIsAgent !== undefined) setIsAgent(initialIsAgent);
+
+      processUserMessage(initialInput, initialModels, initialIsAgent, chatId, []);
+    }
+  }, [chatId, location]);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -496,7 +549,7 @@ export default function ChatPage() {
           {messages.map((m, idx) => (
             <div
               key={idx}
-              className={`flex gap-4 ${m.role === "user" ? "justify-end" : "justify-start"}`}
+              className={`flex gap-4 animate-in fade-in duration-500 slide-in-from-bottom-2 ${m.role === "user" ? "justify-end" : "justify-start"}`}
             >
               <div
                 className={`relative text-[15px] leading-relaxed group ${
@@ -505,11 +558,18 @@ export default function ChatPage() {
                     : "text-zinc-100 w-full px-0 py-2" 
                 }`}
               >
-                <MultiModelDisplay 
-                  content={m.content} 
-                  isStreaming={loading && idx === messages.length - 1}
-                  completedModels={m.completedModels || []}
-                />
+                 {/* --- MOVED LOADING DOTS INSIDE BUBBLE --- */}
+                {m.role === "assistant" && loading && idx === messages.length - 1 && !m.content ? (
+                   <div className="flex items-center gap-1.5 h-6 px-1 my-1">
+                     <span className="w-4 h-4 bg-zinc-200 rounded-full animate-pulse"></span>
+                   </div>
+                ) : (
+                  <MultiModelDisplay 
+                    content={m.content} 
+                    isStreaming={loading && idx === messages.length - 1}
+                    completedModels={m.completedModels || []}
+                  />
+                )}
 
                 {m.role === "assistant" && !m.content.startsWith("{") && m.content && (
                   <button
@@ -524,13 +584,7 @@ export default function ChatPage() {
             </div>
           ))}
 
-          {loading && (
-            <div className="flex gap-4">
-              <div className="flex items-center gap-1.5 h-10 px-2">
-                <span className="w-4 h-4 bg-white rounded-full animate-pulse [animation-delay:-0.3s]"></span>
-              </div>
-            </div>
-          )}
+          {/* --- REMOVED BOTTOM LOADING INDICATOR --- */}
 
           {error && (
             <div className="flex justify-center">
