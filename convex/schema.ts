@@ -4,6 +4,7 @@ import { v } from "convex/values";
 export default defineSchema({
   chat: defineTable({
     title: v.string(),
+    userId: v.optional(v.string()),
     modelCount: v.optional(v.number()), 
     messages: v.array(
       v.object({
@@ -16,5 +17,5 @@ export default defineSchema({
     ),
     createdAt: v.number(),
     updatedAt: v.number(),
-  }),
+  }).index("by_userId", ["userId", "updatedAt"]),
 });
