@@ -2,17 +2,18 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import './index.css'
 import App from './App.tsx'
-import Layout from './Layout.tsx' // Import the new Layout
+import Layout from './Layout.tsx'
 import { createBrowserRouter, RouterProvider } from 'react-router-dom';
-import { ConvexProvider, ConvexReactClient } from 'convex/react';
-// import { SidebarTrigger } from './components/ui/sidebar.tsx'
+import { ConvexReactClient } from 'convex/react';
+import { ConvexBetterAuthProvider } from "@convex-dev/better-auth/react";
+import { authClient } from "./lib/auth-client";
 import Chat from "./pages/chat/Chat.tsx"
 
 const convex = new ConvexReactClient(import.meta.env.VITE_CONVEX_URL as string);
 
 const router = createBrowserRouter([
   {
-    element: <Layout />, // Wrap routes in the Layout
+    element: <Layout />,
     children: [
       {
         path: "/",
@@ -28,8 +29,8 @@ const router = createBrowserRouter([
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <ConvexProvider client={convex}>
+    <ConvexBetterAuthProvider client={convex} authClient={authClient}>
       <RouterProvider router={router} />
-    </ConvexProvider>
+    </ConvexBetterAuthProvider>
   </StrictMode>,
 )

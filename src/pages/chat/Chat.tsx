@@ -80,7 +80,6 @@ const MultiModelDisplay = ({
 
   // --- HANDLE SINGLE MODEL SEARCHING STATE ---
   if (!isMultiModel) {
-    // Check if any model (likely the only one) is currently searching
     const isSearching = Object.values(modelStatus).some(s => s === "searching");
 
     if (isSearching && !content) {
@@ -88,6 +87,16 @@ const MultiModelDisplay = ({
         <div className="flex items-center gap-2.5 text-blue-400 py-1 animate-in fade-in duration-300">
           <Globe className="w-4 h-4" />
           <span className="text-sm font-medium animate-pulse">Searching the web...</span>
+        </div>
+      );
+    }
+
+    // Show thinking dot if streaming but no content yet
+    if (isStreaming && !content) {
+      return (
+        <div className="flex items-center gap-2 text-zinc-500 italic py-1 animate-in fade-in duration-300">
+          <span className="w-4 h-4 bg-white rounded-full animate-pulse"></span>
+          {/* <span>Thinking...</span> */}
         </div>
       );
     }
@@ -171,7 +180,10 @@ const MultiModelDisplay = ({
                   <span className="text-sm">Browsing the internet for answers...</span>
                 </div>
              ) : (
-               <span className="text-zinc-600 italic">Waiting for response...</span>
+               <div className="flex items-center gap-2 text-zinc-500 italic">
+                 <span className="w-2 h-2 bg-zinc-500 rounded-full animate-pulse"></span>
+                 Thinking...
+               </div>
              )}
           </div>
         </div>
@@ -199,7 +211,7 @@ export default function ChatPage() {
   });
 
   const [isAgent, setIsAgent] = useState(false);
-  const [webSearchEnabled, setWebSearchEnabled] = useState(false); // <--- WEB SEARCH STATE
+  const [webSearchEnabled, setWebSearchEnabled] = useState(false);
 
   useEffect(() => {
     if (!isAgent && selectedModels.length > 1) {
@@ -310,15 +322,14 @@ export default function ChatPage() {
     currentModels: string[], 
     agentMode: boolean, 
     activeChatId: Id<"chat">,
-    webSearch: boolean, // <--- ACCEPT WEB SEARCH param
+    webSearch: boolean,
     initialMessages: Message[] = [] 
   ) => {
     setError(null);
     setLoading(true);
 
-    const initialContent = agentMode 
-      ? JSON.stringify(currentModels.reduce((acc, modelId) => ({ ...acc, [modelId]: "" }), {}))
-      : "";
+    // FIXED: Always start with empty string
+    const initialContent = "";
 
     const assistantMsgId = Math.random().toString(36).substring(7);
 
@@ -355,7 +366,7 @@ export default function ChatPage() {
           model: currentModels[0], 
           models: currentModels,
           isAgentMode: agentMode,
-          webSearchEnabled: webSearch, // <--- PASS TO SERVER
+          webSearchEnabled: webSearch,
           messages: [
             ...initialMessages.map((m) => ({ role: m.role, content: m.content })),
             { role: "user", content: userContent }
@@ -503,7 +514,6 @@ export default function ChatPage() {
     const userInput = input.trim();
     setInput("");
     
-    // Capture current toggle state
     const enableSearch = webSearchEnabled;
 
     if (!chatId) {
@@ -520,7 +530,7 @@ export default function ChatPage() {
             initialInput: userInput,
             initialModels: selectedModels,
             initialIsAgent: isAgent,
-            initialWebSearch: enableSearch // Pass to new route
+            initialWebSearch: enableSearch
           } 
         });
       } catch (err: any) {
@@ -593,11 +603,10 @@ export default function ChatPage() {
                     : "text-zinc-100 w-full px-0 py-2" 
                 }`}
               >
-                {/* --- RENDER CONTENT --- */}
-                {m.role === "assistant" && loading && idx === messages.length - 1 && !m.content && !m.modelStatus ? (
-                   <div className="flex items-center gap-1.5 h-6 px-1 my-1">
-                     <span className="w-4 h-4 bg-zinc-200 rounded-full animate-pulse"></span>
-                   </div>
+                {m.role === "user" ? (
+                  <div className="whitespace-pre-wrap font-normal">
+                    {m.content}
+                  </div>
                 ) : (
                   <MultiModelDisplay 
                     content={m.content} 
@@ -648,7 +657,6 @@ export default function ChatPage() {
 
             <div className="flex justify-between items-center mt-2 px-1">
               <div className="flex items-center gap-3">
-          
 
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
@@ -706,7 +714,7 @@ export default function ChatPage() {
                   </DropdownMenuContent>
                 </DropdownMenu>
 
-<button
+                <button
                   type="button"
                   onClick={() => setWebSearchEnabled(!webSearchEnabled)}
                   className={`flex items-center gap-2 rounded-full text-xs font-medium transition-all border cursor-pointer focus:outline-none ${
@@ -717,9 +725,7 @@ export default function ChatPage() {
                   title={webSearchEnabled ? "Web Search Enabled" : "Enable Web Search"}
                 >
                   <Globe className="w-3.5 h-3.5" />
-                  {/* <span className={webSearchEnabled ? "block" : "hidden sm:block"}>Search</span> */}
                 </button>
-                
 
                 <div 
                   className={`flex items-center space-x-2 pl-2  border-zinc-800 transition-opacity duration-300 ${isChatStarted ? "opacity-60" : "opacity-100"}`}
@@ -747,25 +753,23 @@ export default function ChatPage() {
                 </div>
               </div>
 
-              
-
               <div className="flex gap-2">
                 <button
                   onClick={() => handleSubmit()}
                   disabled={!input.trim() || loading}
                   className={`h-9 w-9 rounded-full flex items-center justify-center transition-all shadow-lg ${
                     !input.trim() || loading 
-                      ? "bg-zinc-800 text-zinc-600 cursor-not-allowed" 
+                      ? "bg-zinc-800 text-zinc-600 cursor-not-allowed"
                       : "bg-zinc-100 hover:bg-zinc-300 text-zinc-950 cursor-pointer"
-                  }`}
-                >
-                  <Send className="w-4 h-4" />
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
+                                        }`}
+                                      >
+                                        <Send className="w-4 h-4" />
+                                      </button>
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      }
