@@ -10,7 +10,9 @@ import {
   Cpu,
   Check,
   AlertCircle,
-  Bot
+  Bot,
+  Wrench,
+  Globe
 } from "lucide-react";
 
 import {
@@ -32,24 +34,16 @@ import { api } from "../convex/_generated/api";
 import type { Id } from "../convex/_generated/dataModel";
 import { useOutletContext } from "react-router-dom";
 
-const AVAILABLE_MODELS = [
-  { id: "google/gemini-2.5-flash", name: "Gemini 2.5 Flash" },
-  { id: "allenai/olmo-3.1-32b-think:free", name:"Olmo 3.1B Thinking"},
-  { id: "mistralai/devstral-2512:free", name:"Mistral: Devstral"},
-  { id: "openai/gpt-oss-120b:free", name:"GPT-OSS 120B"},
-  { id: "moonshotai/kimi-k2:free", name:"Kimi K2"},
-  { id: "qwen/qwen3-4b:free", name:"Qwen 3 4B"},
-  { id: "google/gemini-3-pro-preview", name:"Gemini 3 Pro"},
-  { id: "google/gemini-3-flash-preview", name:"Gemini 3 Flash"},
-  { id: "cognitivecomputations/dolphin-mistral-24b-venice-edition:free", name:"Venice: Uncensored"},
-];
+// SHARED MODELS
+import { AVAILABLE_MODELS } from "@/lib/models";
 
 interface Message {
-  id?: string; // Added ID for reliable tracking
+  id?: string;
   role: "user" | "assistant";
   content: string;
   timestamp: number;
   completedModels?: string[];
+  modelStatus?: Record<string, string>;
 }
 
 type LayoutContext = {
@@ -61,11 +55,13 @@ type LayoutContext = {
 const MultiModelDisplay = ({ 
   content, 
   isStreaming,
-  completedModels = []
+  completedModels = [],
+  modelStatus = {}
 }: { 
   content: string; 
   isStreaming: boolean;
   completedModels?: string[];
+  modelStatus?: Record<string, string>;
 }) => {
   const [activeModelId, setActiveModelId] = useState<string | null>(null);
   
@@ -82,7 +78,17 @@ const MultiModelDisplay = ({
     isMultiModel = false;
   }
 
+  // --- HANDLE SINGLE MODEL SEARCHING STATE ---
   if (!isMultiModel) {
+    const isSearching = Object.values(modelStatus).some(s => s === "searching");
+    if (isSearching && !content) {
+      return (
+        <div className="flex items-center gap-2.5 text-blue-400 py-1 animate-in fade-in duration-300">
+          <Globe className="w-4 h-4" />
+          <span className="text-sm font-medium animate-pulse">Searching the web...</span>
+        </div>
+      );
+    }
     return (
       <div className="whitespace-pre-wrap font-normal">
         <Markdown remarkPlugins={[remarkGfm]}>{content}</Markdown>
@@ -90,7 +96,7 @@ const MultiModelDisplay = ({
     );
   }
 
-  const models = Object.keys(modelResponses);
+  const models = Object.keys(modelResponses).length > 0 ? Object.keys(modelResponses) : Object.keys(modelStatus);
 
   return (
     <div className="space-y-4 w-full">
@@ -98,7 +104,9 @@ const MultiModelDisplay = ({
         {models.map((modelId) => {
           const modelName = AVAILABLE_MODELS.find(m => m.id === modelId)?.name || modelId;
           const isActive = activeModelId === modelId;
-          const hasContent = modelResponses[modelId]?.length > 0;
+          const responseText = modelResponses[modelId] || "";
+          const status = modelStatus[modelId];
+          const hasContent = responseText.length > 0;
           const isCompleted = completedModels.includes(modelId) || (!isStreaming && hasContent);
 
           return (
@@ -131,6 +139,11 @@ const MultiModelDisplay = ({
                     </span>
                     Streaming...
                   </span>
+                ) : status === "searching" ? (
+                   <span className="text-blue-400 flex items-center gap-1.5 animate-pulse">
+                     <Globe className="w-3 h-3 animate-spin duration-[3000ms]" />
+                     Searching web...
+                   </span>
                 ) : (
                   <span className="text-zinc-500">Thinking...</span>
                 )}
@@ -149,6 +162,11 @@ const MultiModelDisplay = ({
           <div className="whitespace-pre-wrap font-normal min-h-[60px]">
              {modelResponses[activeModelId] ? (
                <Markdown remarkPlugins={[remarkGfm]}>{modelResponses[activeModelId]}</Markdown>
+             ) : modelStatus[activeModelId] === "searching" ? (
+                <div className="flex flex-col items-center justify-center py-6 text-zinc-500 gap-2">
+                  <Globe className="w-6 h-6 text-blue-500/50 animate-bounce" />
+                  <span className="text-sm">Browsing the internet for answers...</span>
+                </div>
              ) : (
                <span className="text-zinc-600 italic">Waiting for response...</span>
              )}
@@ -178,6 +196,7 @@ export default function ChatPage() {
   });
 
   const [isAgent, setIsAgent] = useState(false);
+  const [webSearchEnabled, setWebSearchEnabled] = useState(false); // <--- WEB SEARCH STATE
 
   useEffect(() => {
     if (!isAgent && selectedModels.length > 1) {
@@ -194,9 +213,7 @@ export default function ChatPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // --- SAFETY LOCK: Prevents double prompts/fetches ---
   const processedChatId = useRef<string | null>(null);
-  
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -290,12 +307,12 @@ export default function ChatPage() {
     navigator.clipboard.writeText(text);
   };
 
-  // 3. Extracted Core Streaming Logic with ID Fixes
   const processUserMessage = async (
     userContent: string, 
     currentModels: string[], 
     agentMode: boolean, 
     activeChatId: Id<"chat">,
+    webSearch: boolean, // <--- ACCEPT WEB SEARCH param
     initialMessages: Message[] = [] 
   ) => {
     setError(null);
@@ -305,7 +322,6 @@ export default function ChatPage() {
       ? JSON.stringify(currentModels.reduce((acc, modelId) => ({ ...acc, [modelId]: "" }), {}))
       : "";
 
-    // Generate specific ID for tracking
     const assistantMsgId = Math.random().toString(36).substring(7);
 
     const newUserMessage: Message = { 
@@ -314,12 +330,16 @@ export default function ChatPage() {
       timestamp: Date.now() 
     };
     
+    // Default initial status is thinking
+    const initialStatus = currentModels.reduce((acc, id) => ({...acc, [id]: "thinking"}), {});
+
     const newAssistantMessage: Message = { 
-      id: assistantMsgId, // Track ID
+      id: assistantMsgId, 
       role: "assistant", 
       content: initialContent, 
       timestamp: Date.now(), 
-      completedModels: [] 
+      completedModels: [],
+      modelStatus: initialStatus
     };
 
     setMessages((prev) => [...prev, newUserMessage, newAssistantMessage]);
@@ -338,6 +358,7 @@ export default function ChatPage() {
           model: currentModels[0], 
           models: currentModels,
           isAgentMode: agentMode,
+          webSearchEnabled: webSearch, // <--- PASS TO SERVER
           messages: [
             ...initialMessages.map((m) => ({ role: m.role, content: m.content })),
             { role: "user", content: userContent }
@@ -356,6 +377,8 @@ export default function ChatPage() {
 
       let buffer = "";
       let accumulatedResponses: Record<string, string> = {};
+      let currentStatuses: Record<string, string> = {...initialStatus};
+
       currentModels.forEach(m => accumulatedResponses[m] = "");
       let plainStringAccumulator = "";
       let completedModels: string[] = [];
@@ -380,24 +403,43 @@ export default function ChatPage() {
               const payload = JSON.parse(payloadStr);
 
               if (payload.modelId) {
-                const { modelId, content = "", done: modelDone } = payload;
+                const { modelId, content = "", done: modelDone, status } = payload;
+
+                if (status) {
+                  currentStatuses[modelId] = status;
+                  setMessages((prev) => {
+                    const updated = [...prev];
+                    const msgIndex = updated.findIndex(m => m.id === assistantMsgId);
+                    if (msgIndex !== -1) {
+                      updated[msgIndex] = {
+                        ...updated[msgIndex],
+                        modelStatus: { ...currentStatuses }
+                      };
+                    }
+                    return updated;
+                  });
+                }
 
                 if (modelDone && !completedModels.includes(modelId)) {
                   completedModels.push(modelId);
                 }
 
                 if (content) {
+                  if (currentStatuses[modelId] === "searching") {
+                     currentStatuses[modelId] = "streaming";
+                  }
+
                   if (agentMode) {
                     accumulatedResponses[modelId] = (accumulatedResponses[modelId] || "") + content;
                     setMessages((prev) => {
                       const updated = [...prev];
-                      // Find via ID
                       const msgIndex = updated.findIndex(m => m.id === assistantMsgId);
                       if (msgIndex !== -1) {
                         updated[msgIndex] = {
                           ...updated[msgIndex],
                           content: JSON.stringify(accumulatedResponses),
-                          completedModels: [...completedModels]
+                          completedModels: [...completedModels],
+                          modelStatus: { ...currentStatuses }
                         };
                       }
                       return updated;
@@ -406,13 +448,13 @@ export default function ChatPage() {
                     plainStringAccumulator += content;
                     setMessages((prev) => {
                       const updated = [...prev];
-                      // Find via ID
                       const msgIndex = updated.findIndex(m => m.id === assistantMsgId);
                       if (msgIndex !== -1) {
                         updated[msgIndex] = {
                           ...updated[msgIndex],
                           content: plainStringAccumulator,
-                          completedModels: [...completedModels]
+                          completedModels: [...completedModels],
+                          modelStatus: { ...currentStatuses }
                         };
                       }
                       return updated;
@@ -451,14 +493,12 @@ export default function ChatPage() {
     } catch (err: any) {
       console.error(err);
       setError(err.message || "Something went wrong");
-      // Clean up the optimistic message if failed
       setMessages((prev) => prev.filter(m => m.id !== assistantMsgId));
     } finally {
       setLoading(false);
     }
   };
 
-  // 4. Handle Submit: Route first if New Chat
   const handleSubmit = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     if (!input.trim() || loading) return;
@@ -466,7 +506,9 @@ export default function ChatPage() {
     const userInput = input.trim();
     setInput("");
     
-    // CASE A: NEW CHAT -> Create ID, Navigate, Pass State. 
+    // Capture current toggle state
+    const enableSearch = webSearchEnabled;
+
     if (!chatId) {
       setLoading(true); 
       try {
@@ -480,7 +522,8 @@ export default function ChatPage() {
           state: { 
             initialInput: userInput,
             initialModels: selectedModels,
-            initialIsAgent: isAgent
+            initialIsAgent: isAgent,
+            initialWebSearch: enableSearch // Pass to new route
           } 
         });
       } catch (err: any) {
@@ -490,29 +533,25 @@ export default function ChatPage() {
       return;
     }
 
-    // CASE B: EXISTING CHAT -> Process immediately
-    await processUserMessage(userInput, selectedModels, isAgent, chatId, messages);
+    await processUserMessage(userInput, selectedModels, isAgent, chatId, enableSearch, messages);
   };
 
-  // 5. Detect incoming state from "New Chat" redirection
   useEffect(() => {
     if (
       chatId && 
       location.state?.initialInput && 
-      processedChatId.current !== chatId // Check lock
+      processedChatId.current !== chatId
     ) {
-      // Set lock
       processedChatId.current = chatId;
 
-      const { initialInput, initialModels, initialIsAgent } = location.state;
-      
-      // Clear navigation state
+      const { initialInput, initialModels, initialIsAgent, initialWebSearch } = location.state;
       window.history.replaceState({}, document.title);
 
       if (initialModels) setSelectedModels(initialModels);
       if (initialIsAgent !== undefined) setIsAgent(initialIsAgent);
+      if (initialWebSearch !== undefined) setWebSearchEnabled(initialWebSearch);
 
-      processUserMessage(initialInput, initialModels, initialIsAgent, chatId, []);
+      processUserMessage(initialInput, initialModels, initialIsAgent, chatId, initialWebSearch || false, []);
     }
   }, [chatId, location]);
 
@@ -558,8 +597,8 @@ export default function ChatPage() {
                     : "text-zinc-100 w-full px-0 py-2" 
                 }`}
               >
-                 {/* --- MOVED LOADING DOTS INSIDE BUBBLE --- */}
-                {m.role === "assistant" && loading && idx === messages.length - 1 && !m.content ? (
+                {/* --- RENDER CONTENT --- */}
+                {m.role === "assistant" && loading && idx === messages.length - 1 && !m.content && !m.modelStatus ? (
                    <div className="flex items-center gap-1.5 h-6 px-1 my-1">
                      <span className="w-4 h-4 bg-zinc-200 rounded-full animate-pulse"></span>
                    </div>
@@ -568,6 +607,7 @@ export default function ChatPage() {
                     content={m.content} 
                     isStreaming={loading && idx === messages.length - 1}
                     completedModels={m.completedModels || []}
+                    modelStatus={m.modelStatus}
                   />
                 )}
 
@@ -583,8 +623,6 @@ export default function ChatPage() {
               </div>
             </div>
           ))}
-
-          {/* --- REMOVED BOTTOM LOADING INDICATOR --- */}
 
           {error && (
             <div className="flex justify-center">
@@ -614,7 +652,7 @@ export default function ChatPage() {
 
             <div className="flex justify-between items-center mt-2 px-1">
               <div className="flex items-center gap-3">
-                
+
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
                     <button
@@ -628,7 +666,7 @@ export default function ChatPage() {
                   </DropdownMenuTrigger>
                   
                   <DropdownMenuContent 
-                    className="w-64 bg-[#18181b] border-zinc-800 text-zinc-300 p-1.5 shadow-xl" 
+                    className="w-72 bg-[#18181b] border-zinc-800 text-zinc-300 p-1.5 shadow-xl" 
                     side="top" 
                     align="start" 
                     sideOffset={8}
@@ -642,29 +680,51 @@ export default function ChatPage() {
                             e.preventDefault();
                             toggleModel(m.id);
                           }}
-                          className={`flex items-center gap-3 text-sm px-2 py-2.5 rounded-md cursor-pointer focus:bg-zinc-800 focus:text-zinc-100 ${isSelected ? "text-zinc-100" : "text-zinc-400"}`}
+                          className={`flex items-center justify-between text-sm px-2 py-2.5 rounded-md cursor-pointer focus:bg-zinc-800 focus:text-zinc-100 ${isSelected ? "text-zinc-100" : "text-zinc-400"}`}
                         >
-                          <div 
-                            className={`
-                              flex items-center justify-center w-4 h-4 border transition-all
-                              ${isSelected 
-                                ? "bg-zinc-100 border-zinc-100 text-black" 
-                                : "border-zinc-600 bg-transparent hover:border-zinc-500"
-                              }
-                            `}
-                          >
-                            {isSelected && <Check className="w-3 h-3 stroke-[3]" />}
+                          <div className="flex items-center gap-3 overflow-hidden">
+                            <div 
+                              className={`
+                                flex-shrink-0 flex items-center justify-center w-4 h-4 border transition-all
+                                ${isSelected 
+                                  ? "bg-zinc-100 border-zinc-100 text-black" 
+                                  : "border-zinc-600 bg-transparent hover:border-zinc-500"
+                                }
+                              `}
+                            >
+                              {isSelected && <Check className="w-3 h-3 stroke-[3]" />}
+                            </div>
+                            
+                            <span className="truncate">{m.name}</span>
                           </div>
-                          
-                          <span>{m.name}</span>
+
+                          {m.supportTools && (
+                            <div className="flex items-center gap-1.5 pl-2" title="Supports Tool Calling">
+                               <Wrench className="w-3.5 h-3.5 text-emerald-500/70" />
+                            </div>
+                          )}
                         </DropdownMenuItem>
                       );
                     })}
                   </DropdownMenuContent>
                 </DropdownMenu>
 
+                <button
+                  type="button"
+                  onClick={() => setWebSearchEnabled(!webSearchEnabled)}
+                  className={`flex items-center gap-2 rounded-full text-xs font-medium transition-all border cursor-pointer focus:outline-none ${
+                    webSearchEnabled 
+                      ? "bg-blue-500/10 text-blue-400 border-blue-500/20 hover:bg-blue-500/20" 
+                      : "bg-transparent text-zinc-500 border-transparent hover:text-zinc-300 hover:bg-zinc-800/50"
+                  }`}
+                  title={webSearchEnabled ? "Web Search Enabled" : "Enable Web Search"}
+                >
+                  <Globe className="w-3.5 h-3.5" />
+                  {/* <span className={webSearchEnabled ? "block" : "hidden sm:block"}>Search</span> */}
+                </button>
+
                 <div 
-                  className={`flex items-center space-x-2 pl-2 border-l border-zinc-800 transition-opacity duration-300 ${isChatStarted ? "opacity-60" : "opacity-100"}`}
+                  className={`flex items-center space-x-2 pl-2  border-zinc-800 transition-opacity duration-300 ${isChatStarted ? "opacity-60" : "opacity-100"}`}
                   title={isChatStarted ? `Agent mode is ${isAgent ? 'active' : 'inactive'} and locked for this chat` : "Toggle Agent Mode"}
                 >
                   <Switch 
@@ -687,7 +747,6 @@ export default function ChatPage() {
                     Agent
                   </Label>
                 </div>
-
               </div>
 
               <div className="flex gap-2">
