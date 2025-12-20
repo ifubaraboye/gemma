@@ -1,4 +1,6 @@
 [*] - Promting model
 [*] - Routing
 [*] - Database
-[] -  Multi Model Selection / Agent Mode
+[*] -  Multi Model Selection / Agent Mode / Tool Calling
+[] - Auth
+[] - Caching
