@@ -4,10 +4,10 @@ import './index.css'
 import App from './App.tsx'
 import Layout from './Layout.tsx'
 import { createBrowserRouter, RouterProvider } from 'react-router-dom';
-import { ConvexReactClient } from 'convex/react';
-import { ConvexBetterAuthProvider } from "@convex-dev/better-auth/react";
-import { authClient } from "./lib/auth-client";
 import Chat from "./pages/chat/Chat.tsx"
+import { Auth0Provider } from '@auth0/auth0-react';
+import { ConvexProviderWithAuth0 } from "convex/react-auth0";
+import { ConvexReactClient } from 'convex/react';
 
 const convex = new ConvexReactClient(import.meta.env.VITE_CONVEX_URL as string);
 
@@ -29,8 +29,18 @@ const router = createBrowserRouter([
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <ConvexBetterAuthProvider client={convex} authClient={authClient}>
-      <RouterProvider router={router} />
-    </ConvexBetterAuthProvider>
+     <Auth0Provider
+      domain={import.meta.env.VITE_AUTH0_DOMAIN}
+      clientId={import.meta.env.VITE_AUTH0_CLIENT_ID}
+      authorizationParams={{
+        redirect_uri: window.location.origin,
+      }}
+      useRefreshTokens={true}
+      cacheLocation="localstorage"
+    >
+      <ConvexProviderWithAuth0 client={convex}>
+        <RouterProvider router={router} />
+      </ConvexProviderWithAuth0>
+      </Auth0Provider>
   </StrictMode>,
 )
