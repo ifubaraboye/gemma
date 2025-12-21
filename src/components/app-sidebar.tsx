@@ -1,3 +1,4 @@
+
 import {
   Sidebar,
   SidebarContent,
@@ -20,10 +21,10 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { useNavigate } from "react-router-dom";
 import { useMutation, useQuery } from "convex/react";
-import { Trash2, User2, ChevronUp, LogOut } from "lucide-react";
+import { Trash2, ChevronUp, LogOut } from "lucide-react";
 import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
-import { authClient } from "@/lib/auth-client";
+import { useAuth0 } from "@auth0/auth0-react";
 
 interface AppSidebarProps {
   activeChatId: Id<"chat"> | null;
@@ -32,7 +33,7 @@ interface AppSidebarProps {
 
 export function AppSidebar({ activeChatId, onSelectChat }: AppSidebarProps) {
   const navigate = useNavigate();
-  const { data: session } = authClient.useSession();
+  const { user, logout } = useAuth0();
 
   const chats = useQuery(api.chat.listChats);
   const deleteChat = useMutation(api.chat.deleteChat);
@@ -54,8 +55,7 @@ export function AppSidebar({ activeChatId, onSelectChat }: AppSidebarProps) {
   };
 
   const handleSignOut = async () => {
-    await authClient.signOut();
-    // Navigate is handled by Layout auth check, but we can force refresh if needed
+    await logout({ logoutParams: { returnTo: window.location.origin } });
   };
 
   return (
@@ -64,27 +64,23 @@ export function AppSidebar({ activeChatId, onSelectChat }: AppSidebarProps) {
       <SidebarHeader className="text-center">
         <SidebarMenu>
           <SidebarMenuItem>
-  <SidebarMenuButton
-    size="lg"
-    onClick={handleNewChat}
-    className="
-      flex justify-center gap-2 cursor-pointer transition-colors duration-150
-
-      bg-sidebar-primary text-sidebar-primary-foreground
-      hover:bg-[#09090B] hover:text-white
-
-      active:bg-[#09090B] active:text-white
-      focus:bg-[#09090B] focus:text-white
-      focus-visible:bg-[#09090B] focus-visible:text-white
-
-      data-[state=open]:bg-[#09090B] data-[state=open]:text-white
-      aria-[current=page]:bg-[#09090B] aria-[current=page]:text-white
-    "
-  >
-    New Chat
-  </SidebarMenuButton>
-</SidebarMenuItem>
-
+            <SidebarMenuButton
+              size="lg"
+              onClick={handleNewChat}
+              className="
+                flex justify-center gap-2 cursor-pointer transition-colors duration-150
+                bg-sidebar-primary text-sidebar-primary-foreground
+                hover:bg-[#09090B] hover:text-white
+                active:bg-[#09090B] active:text-white
+                focus:bg-[#09090B] focus:text-white
+                focus-visible:bg-[#09090B] focus-visible:text-white
+                data-[state=open]:bg-[#09090B] data-[state=open]:text-white
+                aria-[current=page]:bg-[#09090B] aria-[current=page]:text-white
+              "
+            >
+              New Chat
+            </SidebarMenuButton>
+          </SidebarMenuItem>
         </SidebarMenu>
       </SidebarHeader>
 
@@ -157,12 +153,16 @@ export function AppSidebar({ activeChatId, onSelectChat }: AppSidebarProps) {
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <SidebarMenuButton size="lg" className="flex items-center gap-2 data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground cursor-pointer">
-                  <div className="flex items-center justify-center rounded-lg bg-sidebar-accent text-sidebar-accent-foreground p-1">
-                    <User2 className="size-4" />
-                  </div>
+                  {user?.picture ? (
+                    <img src={user.picture} alt={user.name} className="w-6 h-6 rounded-full" />
+                  ) : (
+                    <div className="flex items-center justify-center rounded-lg bg-sidebar-accent text-sidebar-accent-foreground p-1">
+                      <span className="text-sm font-bold">{user?.name?.charAt(0) ?? 'U'}</span>
+                    </div>
+                  )}
                   <div className="grid flex-1 text-left text-sm leading-tight">
-                    <span className="truncate font-semibold">{session?.user?.name || "User"}</span>
-                    <span className="truncate text-xs text-sidebar-foreground/70">{session?.user?.email}</span>
+                    <span className="truncate font-semibold">{user?.name || "User"}</span>
+                    <span className="truncate text-xs text-sidebar-foreground/70">{user?.email}</span>
                   </div>
                   <ChevronUp className="ml-auto size-4" />
                 </SidebarMenuButton>
