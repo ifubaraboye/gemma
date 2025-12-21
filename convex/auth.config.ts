@@ -1,6 +1,10 @@
-import { getAuthConfigProvider } from "@convex-dev/better-auth/auth-config";
-import type { AuthConfig } from "convex/server";
+import { AuthConfig } from "convex/server";
 
 export default {
-  providers: [getAuthConfigProvider()],
+  providers: [
+    {
+      domain: "dev-sk6o6f6m1vcjqthi.us.auth0.com",
+      applicationID: "dMze2Iwo6EI9EddsEOt9941EFIMm59qs",
+    },
+  ]
 } satisfies AuthConfig;
