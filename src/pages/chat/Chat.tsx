@@ -36,6 +36,7 @@ import { useOutletContext } from "react-router-dom";
 
 // SHARED MODELS
 import { AVAILABLE_MODELS } from "@/lib/models";
+import { getCachedChat, saveChatToCache } from "@/lib/indexedDB";
 
 interface Message {
   id?: string;
@@ -248,13 +249,26 @@ export default function ChatPage() {
       setInput("");
       setError(null);
       processedChatId.current = null;
+    } else if (!chat) {
+      // Try to load from cache if not yet loaded from server
+      getCachedChat(chatId).then((cached) => {
+        if (cached && !chat) {
+          setMessages(cached.messages);
+        }
+      });
     }
-  }, [chatId]);
+  }, [chatId, chat]);
 
   useEffect(() => {
     if (chat?.messages) {
       if (!loading) {
         setMessages(chat.messages);
+        // Cache the chat data
+        saveChatToCache({
+          _id: chat._id,
+          messages: chat.messages,
+          timestamp: Date.now(),
+        }).catch((err) => console.error("Failed to cache chat:", err));
       }
       if (chat.messages.length > 0) {
         const lastAssistantMessage = [...chat.messages].reverse().find(m => m.role === "assistant");
@@ -450,6 +464,14 @@ export default function ChatPage() {
                           modelStatus: { ...currentStatuses }
                         };
                       }
+                      
+                      // Update cache
+                      saveChatToCache({
+                        _id: activeChatId,
+                        messages: updated,
+                        timestamp: Date.now(),
+                      }).catch(err => console.error("Failed to cache during stream:", err));
+
                       return updated;
                     });
                   } else {
@@ -465,6 +487,14 @@ export default function ChatPage() {
                           modelStatus: { ...currentStatuses }
                         };
                       }
+
+                      // Update cache
+                      saveChatToCache({
+                        _id: activeChatId,
+                        messages: updated,
+                        timestamp: Date.now(),
+                      }).catch(err => console.error("Failed to cache during stream:", err));
+
                       return updated;
                     });
                   }

@@ -8,12 +8,14 @@ import Chat from "./pages/chat/Chat.tsx"
 import { Auth0Provider } from '@auth0/auth0-react';
 import { ConvexProviderWithAuth0 } from "convex/react-auth0";
 import { ConvexReactClient } from 'convex/react';
+import  NotFound from './components/NotFound.tsx'
 
 const convex = new ConvexReactClient(import.meta.env.VITE_CONVEX_URL as string);
 
 const router = createBrowserRouter([
   {
     element: <Layout />,
+    errorElement: <NotFound />,
     children: [
       {
         path: "/",

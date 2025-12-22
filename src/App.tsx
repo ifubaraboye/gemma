@@ -588,7 +588,7 @@ export default function ChatPage() {
               <div className="w-16 h-16 bg-zinc-900 rounded-2xl flex items-center justify-center mb-6 border border-zinc-800 shadow-xl">
                 <Sparkles className="w-8 h-8 text-zinc-400" />
               </div>
-              <h1 className="text-3xl font-bold text-transparent bg-clip-text bg-gradient-to-b from-white to-zinc-400 mb-3">
+              <h1 className="text-3xl font-bold text-white bg-clip-text bg-gradient-to-b from-white to-zinc-400 mb-3">
                 Welcome back
               </h1>
               <p className="text-zinc-500 max-w-sm">
