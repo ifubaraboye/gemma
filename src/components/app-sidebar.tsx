@@ -25,6 +25,8 @@ import { Trash2, ChevronUp, LogOut } from "lucide-react";
 import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
 import { useAuth0 } from "@auth0/auth0-react";
+import { useState, useEffect } from "react";
+import { getCachedChatList, saveChatListToCache, deleteCachedChat } from "@/lib/indexedDB";
 
 interface AppSidebarProps {
   activeChatId: Id<"chat"> | null;
@@ -35,12 +37,31 @@ export function AppSidebar({ activeChatId, onSelectChat }: AppSidebarProps) {
   const navigate = useNavigate();
   const { user, logout } = useAuth0();
 
+  const [cachedChats, setCachedChats] = useState<any[] | null>(null);
   const chats = useQuery(api.chat.listChats);
   const deleteChat = useMutation(api.chat.deleteChat);
+
+  useEffect(() => {
+    getCachedChatList().then((list) => {
+      if (list) setCachedChats(list);
+    });
+  }, []);
+
+  useEffect(() => {
+    if (chats) {
+      setCachedChats(chats);
+      saveChatListToCache(chats).catch((err) =>
+        console.error("Failed to cache chat list:", err)
+      );
+    }
+  }, [chats]);
+
+  const displayChats = chats ?? cachedChats;
 
   const handleDelete = async (e: React.MouseEvent, id: Id<"chat">) => {
     e.stopPropagation();
     await deleteChat({ chatId: id });
+    await deleteCachedChat(id).catch(err => console.error("Failed to delete from cache:", err));
     
     // If deleting active chat, reset to home
     if (activeChatId === id) {
@@ -90,7 +111,7 @@ export function AppSidebar({ activeChatId, onSelectChat }: AppSidebarProps) {
           <SidebarGroupLabel className="text-sidebar-foreground/70">Your Chats</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
-              {chats === undefined ? (
+              {displayChats === null ? (
                 // Loading State
                 Array.from({ length: 5 }).map((_, i) => (
                    <SidebarMenuItem key={i}>
@@ -101,7 +122,7 @@ export function AppSidebar({ activeChatId, onSelectChat }: AppSidebarProps) {
                 ))
               ) : (
                 <>
-                  {chats.map((chat) => (
+                  {displayChats.map((chat) => (
                     <SidebarMenuItem key={chat._id}>
                       <SidebarMenuButton
                         onClick={() => {
@@ -134,7 +155,7 @@ export function AppSidebar({ activeChatId, onSelectChat }: AppSidebarProps) {
                     </SidebarMenuItem>
                   ))}
 
-                  {chats.length === 0 && (
+                  {displayChats.length === 0 && (
                     <div className="p-4 text-xs text-center text-sidebar-foreground/50">
                       No chats yet
                     </div>
