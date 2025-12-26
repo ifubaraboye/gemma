@@ -364,7 +364,7 @@ export default function ChatPage() {
         content: userContent,
       }).catch(err => console.error("Failed to save user message:", err));
 
-      const res = await fetch("http://localhost:3001/chat", {
+      const res = await fetch("https://gemmabackend.onrender.com/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

@@ -28,6 +28,8 @@ import { SidebarTrigger } from "@/components/ui/sidebar";
 
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
+import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 
 import { useMutation, useQuery } from "convex/react";
 import { api } from "../../../convex/_generated/api";
@@ -50,6 +52,78 @@ interface Message {
 type LayoutContext = {
   activeChatId: Id<"chat"> | null;
   setActiveChatId: (id: Id<"chat">) => void;
+};
+
+const CodeBlock = ({ language, children, ...props }: any) => {
+  const [isCopied, setIsCopied] = useState(false);
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(String(children));
+    setIsCopied(true);
+    setTimeout(() => setIsCopied(false), 2000);
+  };
+
+  return (
+    <div className="rounded-lg overflow-hidden my-4 border border-zinc-700 bg-[#1e1e1e] shadow-md group">
+      <div className="flex items-center justify-between px-3 py-1.5 bg-[#252526] border-b border-zinc-700">
+        <span className="text-xs font-medium text-zinc-400 lowercase select-none">
+          {language || 'text'}
+        </span>
+        <button
+          onClick={handleCopy}
+          className="flex items-center gap-1.5 text-xs text-zinc-400 hover:cursor-pointer transition-colors p-1 rounded-md"
+          title="Copy code"
+        >
+          {isCopied ? (
+            <>
+              <Check className="w-3.5 h-3.5 text-emerald-400" />
+              <span className="text-emerald-400">Copied!</span>
+            </>
+          ) : (
+            <>
+              <Copy className="w-3.5 h-3.5" />
+              <span>Copy</span>
+            </>
+          )}
+        </button>
+      </div>
+      <div className="relative">
+        <SyntaxHighlighter
+          style={vscDarkPlus}
+          language={language}
+          PreTag="div"
+          customStyle={{ 
+            margin: 0, 
+            padding: '1rem', 
+            background: 'transparent', 
+            fontSize: '0.9rem',
+            lineHeight: '1.5',
+          }}
+          codeTagProps={{
+            style: { fontFamily: 'var(--font-mono, monospace)' }
+          }}
+          {...props}
+        >
+          {String(children).replace(/\n$/, "")}
+        </SyntaxHighlighter>
+      </div>
+    </div>
+  );
+};
+
+const markdownComponents = {
+  code({ node, inline, className, children, ...props }: any) {
+    const match = /language-(\w+)/.exec(className || "");
+    return !inline && match ? (
+      <CodeBlock language={match[1]} {...props}>
+        {children}
+      </CodeBlock>
+    ) : (
+      <code className={`${className} bg-zinc-800/60 px-1.5 py-0.5 rounded-md text-sm text-zinc-200 border border-zinc-700/50 font-mono`} {...props}>
+        {children}
+      </code>
+    );
+  },
 };
 
 // --- Sub-Component for Model Cards & Content ---
@@ -103,8 +177,13 @@ const MultiModelDisplay = ({
     }
 
     return (
-      <div className="whitespace-pre-wrap font-normal">
-        <Markdown remarkPlugins={[remarkGfm]}>{content}</Markdown>
+      <div className="font-normal text-zinc-200">
+        <Markdown 
+          remarkPlugins={[remarkGfm]} 
+          components={markdownComponents}
+        >
+          {content}
+        </Markdown>
       </div>
     );
   }
@@ -172,9 +251,14 @@ const MultiModelDisplay = ({
             <Bot className="w-3 h-3" />
             Output from {AVAILABLE_MODELS.find(m => m.id === activeModelId)?.name}
           </div>
-          <div className="whitespace-pre-wrap font-normal min-h-[60px]">
+          <div className="font-normal min-h-[60px] text-zinc-200">
              {modelResponses[activeModelId] ? (
-               <Markdown remarkPlugins={[remarkGfm]}>{modelResponses[activeModelId]}</Markdown>
+               <Markdown 
+                remarkPlugins={[remarkGfm]}
+                components={markdownComponents}
+               >
+                 {modelResponses[activeModelId]}
+               </Markdown>
              ) : modelStatus[activeModelId] === "searching" ? (
                 <div className="flex flex-col items-center justify-center py-6 text-zinc-500 gap-2">
                   <Globe className="w-6 h-6 text-blue-500/50 animate-bounce" />
@@ -232,6 +316,9 @@ export default function ChatPage() {
   const processedChatId = useRef<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const shouldAutoScrollRef = useRef(true);
+  const lastScrollTimeRef = useRef(0);
 
   const createChat = useMutation(api.chat.createChat);
   const addMessage = useMutation(api.chat.addMessage);
@@ -293,8 +380,22 @@ export default function ChatPage() {
 
   const isChatStarted = messages.length > 0;
 
+  const handleScroll = () => {
+    if (scrollContainerRef.current) {
+      const { scrollTop, scrollHeight, clientHeight } = scrollContainerRef.current;
+      const isAtBottom = scrollHeight - scrollTop - clientHeight < 100;
+      shouldAutoScrollRef.current = isAtBottom;
+    }
+  };
+
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    if (shouldAutoScrollRef.current) {
+      const now = Date.now();
+      if (now - lastScrollTimeRef.current > 100) {
+        lastScrollTimeRef.current = now;
+        messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+      }
+    }
   }, [messages, loading]);
 
   useEffect(() => {
@@ -373,7 +474,7 @@ export default function ChatPage() {
         content: userContent,
       }).catch(err => console.error("Failed to save user message:", err));
 
-      const res = await fetch("http://localhost:3001/chat", {
+      const res = await fetch("https://gemmabackend.onrender.com/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -540,6 +641,7 @@ export default function ChatPage() {
   const handleSubmit = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     if (!input.trim() || loading) return;
+    shouldAutoScrollRef.current = true;
 
     const userInput = input.trim();
     setInput("");
@@ -605,7 +707,11 @@ export default function ChatPage() {
         <SidebarTrigger className="text-zinc-500 hover:text-zinc-200 cursor-pointer hover:bg-zinc-800" />
       </div>
 
-      <main className="flex-1 overflow-y-auto custom-scrollbar">
+      <main 
+        ref={scrollContainerRef}
+        onScroll={handleScroll}
+        className="flex-1 overflow-y-auto custom-scrollbar"
+      >
         <div className="max-w-[800px] mx-auto px-4 py-12 space-y-8">
           {messages.length === 0 && (
             <div className="flex flex-col items-center justify-center h-[70vh] text-center opacity-0 animate-in fade-in zoom-in duration-500">

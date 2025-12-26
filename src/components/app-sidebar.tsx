@@ -21,7 +21,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { useNavigate } from "react-router-dom";
 import { useMutation, useQuery } from "convex/react";
-import { Trash2, ChevronUp, LogOut } from "lucide-react";
+import { Trash2, ChevronUp, LogOut, User as UserIcon } from "lucide-react";
 import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
 import { useAuth0 } from "@auth0/auth0-react";
@@ -175,10 +175,10 @@ export function AppSidebar({ activeChatId, onSelectChat }: AppSidebarProps) {
               <DropdownMenuTrigger asChild>
                 <SidebarMenuButton size="lg" className="flex items-center gap-2 data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground cursor-pointer">
                   {user?.picture ? (
-                    <img src={user.picture} alt={user.name} className="w-6 h-6 rounded-full" />
+                    <img src={user.picture} alt={user.name} className="w-6 h-6 rounded-full border border-zinc-800" />
                   ) : (
-                    <div className="flex items-center justify-center rounded-lg bg-sidebar-accent text-sidebar-accent-foreground p-1">
-                      <span className="text-sm font-bold">{user?.name?.charAt(0) ?? 'U'}</span>
+                    <div className="flex items-center justify-center w-6 h-6 rounded-full bg-zinc-800 text-zinc-400 border border-zinc-700">
+                      <UserIcon className="size-3.5" />
                     </div>
                   )}
                   <div className="grid flex-1 text-left text-sm leading-tight">
