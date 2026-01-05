@@ -21,7 +21,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { useNavigate } from "react-router-dom";
 import { useMutation, useQuery } from "convex/react";
-import { Trash2, ChevronUp, LogOut, User as UserIcon } from "lucide-react";
+import { Trash2, ChevronUp, LogOut, User as UserIcon, Eye, EyeOff } from "lucide-react";
 import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
 import { useAuth0 } from "@auth0/auth0-react";
@@ -38,6 +38,10 @@ export function AppSidebar({ activeChatId, onSelectChat }: AppSidebarProps) {
   const { user, logout } = useAuth0();
 
   const [cachedChats, setCachedChats] = useState<any[] | null>(null);
+  const [isUserInfoBlurred, setIsUserInfoBlurred] = useState(() => {
+    return localStorage.getItem("isUserInfoBlurred") === "true";
+  });
+  
   const chats = useQuery(api.chat.listChats);
   const deleteChat = useMutation(api.chat.deleteChat);
 
@@ -73,6 +77,12 @@ export function AppSidebar({ activeChatId, onSelectChat }: AppSidebarProps) {
   const handleNewChat = () => {
     onSelectChat(null);
     navigate("/");
+  };
+
+  const toggleUserInfoBlur = () => {
+    const newValue = !isUserInfoBlurred;
+    setIsUserInfoBlurred(newValue);
+    localStorage.setItem("isUserInfoBlurred", String(newValue));
   };
 
   const handleSignOut = async () => {
@@ -175,15 +185,15 @@ export function AppSidebar({ activeChatId, onSelectChat }: AppSidebarProps) {
               <DropdownMenuTrigger asChild>
                 <SidebarMenuButton size="lg" className="flex items-center gap-2 data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground cursor-pointer">
                   {user?.picture ? (
-                    <img src={user.picture} alt={user.name} className="w-6 h-6 rounded-full border border-zinc-800" />
+                    <img src={user.picture} alt={user.name} className={`w-6 h-6 rounded-full border border-zinc-800 ${isUserInfoBlurred ? "blur-sm" : ""}`} />
                   ) : (
                     <div className="flex items-center justify-center w-6 h-6 rounded-full bg-zinc-800 text-zinc-400 border border-zinc-700">
                       <UserIcon className="size-3.5" />
                     </div>
                   )}
                   <div className="grid flex-1 text-left text-sm leading-tight">
-                    <span className="truncate font-semibold">{user?.name || "User"}</span>
-                    <span className="truncate text-xs text-sidebar-foreground/70">{user?.email}</span>
+                    <span className={`truncate font-semibold ${isUserInfoBlurred ? "blur-md" : ""}`}>{user?.name || "User"}</span>
+                    <span className={`truncate text-xs text-sidebar-foreground/70 ${isUserInfoBlurred ? "blur-md" : ""}`}>{user?.email}</span>
                   </div>
                   <ChevronUp className="ml-auto size-4" />
                 </SidebarMenuButton>
@@ -192,6 +202,10 @@ export function AppSidebar({ activeChatId, onSelectChat }: AppSidebarProps) {
                 side="top"
                 className="w-[--radix-popper-anchor-width] min-w-56 rounded-lg bg-[#18181b] border-zinc-800 text-zinc-300"
               >
+                <DropdownMenuItem className="group focus:bg-zinc-800 cursor-pointer" onClick={toggleUserInfoBlur}>
+                   {isUserInfoBlurred ? <Eye className="mr-2 size-4" /> : <EyeOff className="mr-2 size-4" />}
+                   <span>{isUserInfoBlurred ? "Show User Info" : "Hide User Info"}</span>
+                </DropdownMenuItem>
                 <DropdownMenuItem className="group text-red-500 focus:text-red-500 focus:bg-red-950/20 cursor-pointer" onClick={handleSignOut}>
                   <LogOut className="mr-2 size-4" />
                   <span>Sign out</span>
